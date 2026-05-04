@@ -1,0 +1,18 @@
+{
+  "name": "agent-chrome-bridge",
+  "version": "0.3.2",
+  "private": true,
+  "description": "Shared local Chrome bridge for Codex and Claude via a Chrome extension, native messaging, and MCP.",
+  "type": "commonjs",
+  "scripts": {
+    "broker": "node bin/broker.js",
+    "mcp": "node bin/mcp-server.js",
+    "extension:id": "node scripts/extension-id.js",
+    "install:chrome-host": "node scripts/install-native-host.js",
+    "doctor": "node scripts/doctor.js",
+    "test": "node --check bin/broker.js && node --check bin/native-host.js && node --check bin/mcp-server.js && node --check extension/background.js && node --check extension/content-bridge.js && node --check scripts/install-native-host.js && node --check scripts/extension-id.js && node --check scripts/doctor.js && node --check scripts/smoke.js && node --check scripts/content-options-test.js && node scripts/smoke.js && node scripts/content-options-test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

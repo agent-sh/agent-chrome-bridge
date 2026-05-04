@@ -1,0 +1,104 @@
+# Agent Chrome Bridge
+
+Shared Linux Chrome control bridge for Codex and Claude.
+
+The bridge has three pieces:
+
+- `extension/`: a Manifest V3 Chrome extension loaded into your normal Chrome profile. DOM actions are injected through `extension/content-bridge.js`.
+- `bin/native-host.js`: Chrome Native Messaging host used by the extension.
+- `bin/mcp-server.js`: MCP stdio server that Codex and Claude can both use.
+
+The extension talks to the native host. The native host and MCP server meet at a local Unix socket broker. This lets both agents act on the same already-open Chrome windows and tabs instead of launching a separate stripped browser.
+
+## Install
+
+1. Register the native messaging host:
+
+```bash
+npm run install:chrome-host
+```
+
+2. Open `chrome://extensions`, enable Developer mode, click "Load unpacked", and choose the `extension/` directory inside this repository (for example, the absolute path printed by `npm run install:chrome-host`).
+
+3. Check the extension ID:
+
+```bash
+npm run extension:id
+```
+
+It should be:
+
+```text
+pfcpgdlnhaagndelcbdpopojfgalmbkf
+```
+
+4. Add `bin/mcp-server.js` as an MCP command in Codex and Claude.
+
+5. Check the live bridge:
+
+```bash
+npm run doctor
+```
+
+The doctor output includes the broker socket path, action log path, extension connectivity, active tab locks, pending requests, and recent sanitized errors.
+
+## Tools
+
+- `chrome_health`
+- `chrome_action_log`
+- `chrome_lock_tab`
+- `chrome_unlock_tab`
+- `chrome_locks`
+- `chrome_tabs`
+- `chrome_active_tab`
+- `chrome_select_tab`
+- `chrome_new_tab`
+- `chrome_close_tab`
+- `chrome_reload`
+- `chrome_back`
+- `chrome_forward`
+- `chrome_snapshot`
+- `chrome_find`
+- `chrome_extract_links`
+- `chrome_extract_tables`
+- `chrome_read_article`
+- `chrome_get_network`
+- `chrome_navigate`
+- `chrome_click`
+- `chrome_type`
+- `chrome_scroll`
+- `chrome_wait_for_selector`
+- `chrome_wait_for_text`
+- `chrome_wait_until_idle`
+- `chrome_screenshot`
+- `chrome_cdp_health`
+- `chrome_cdp_click`
+- `chrome_cdp_key`
+- `chrome_cdp_type`
+- `chrome_get_console`
+
+`chrome_snapshot` and `chrome_find` return element ids such as `e1` or `f3`. You can pass those ids back to `chrome_click` or `chrome_type` as `elementId`, which is usually more reliable than copying a generated CSS selector by hand. Element ids now carry frame and open-shadow-root refs, so they work in many places where plain CSS selectors are fragile.
+
+Read tools default to all frames and open shadow roots. Pass `includeFrames: false`, `includeShadow: false`, or a specific `frameId` to narrow the target.
+
+`chrome_health` reports the loaded MCP, broker, native host, extension background, and content-script versions. Pass `tabId` if you want the content-script probe to check a specific tab; otherwise it uses the active injectable tab or the first injectable tab it can find.
+
+Mutating tools support optional guards:
+
+- `expectedHost`
+- `expectedUrlIncludes`
+- `lockId`
+
+If a guard does not match the target tab, the action is refused. This is useful when both Codex and Claude can control the same browser.
+
+Use `chrome_lock_tab` before a longer edit flow. It returns a `lockId`; pass that `lockId` to mutating tools for that tab. Other agents will be refused until the lock expires or `chrome_unlock_tab` releases it.
+
+## Notes
+
+The normal bridge uses `chrome.scripting` and normal extension APIs. CDP tools are explicit: `chrome_cdp_click`, `chrome_cdp_key`, `chrome_cdp_type`, and `chrome_get_console` briefly attach the Chrome debugger to a tab, run one job, then detach. Chrome may show a debugger warning while those tools are attached.
+
+The extension requests Chrome's `debugger` permission for the optional CDP layer. After updating from an older version, reload the unpacked extension from `chrome://extensions` and approve any Chrome permission prompt.
+
+Set `AGENT_CHROME_BRIDGE_READ_ONLY=1` on an MCP server process to expose the same read tools while refusing mutating actions.
+
+Action logging is intentionally sanitized: fields such as `text`, `password`, `token`, `secret`, `cookie`, and `authorization` are redacted before they are written to the local JSONL log.
