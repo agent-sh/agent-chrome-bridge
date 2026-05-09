@@ -8,25 +8,24 @@
   </head>
   <body>
     <header class="topbar">
-      <div class="title">Agent Chrome Bridge</div>
+      <div class="title">
+        <span class="dot" id="statusDot"></span>
+        <span>Bridge</span>
+      </div>
       <div class="status" id="status">disconnected</div>
     </header>
 
     <nav class="controls">
-      <label>Model
-        <select id="model">
-          <option value="sonnet" selected>Sonnet 4.6</option>
-          <option value="opus">Opus 4.7</option>
-          <option value="haiku">Haiku 4.5</option>
-        </select>
-      </label>
-      <label>Mode
-        <select id="mode">
-          <option value="per-session" selected>Per-session</option>
-          <option value="per-action">Per-action</option>
-          <option value="trust">Trust</option>
-        </select>
-      </label>
+      <select id="model" aria-label="Model">
+        <option value="sonnet" selected>Sonnet 4.6</option>
+        <option value="opus">Opus 4.7</option>
+        <option value="haiku">Haiku 4.5</option>
+      </select>
+      <select id="mode" aria-label="Approval mode">
+        <option value="per-session" selected>Per-session</option>
+        <option value="per-action">Per-action</option>
+        <option value="trust">Trust</option>
+      </select>
       <button type="button" id="abort" class="danger" disabled>Abort</button>
     </nav>
 

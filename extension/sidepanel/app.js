@@ -9,7 +9,20 @@ const els = {
   mode: document.getElementById('mode'),
   abort: document.getElementById('abort'),
   status: document.getElementById('status'),
+  statusDot: document.getElementById('statusDot'),
 };
+
+const MODEL_LABEL = {
+  'global.anthropic.claude-sonnet-4-6': 'Sonnet 4.6',
+  'global.anthropic.claude-opus-4-7': 'Opus 4.7',
+  'global.anthropic.claude-haiku-4-5-20251001-v1:0': 'Haiku 4.5',
+};
+
+const SAMPLE_PROMPTS = [
+  'List my open tabs by title',
+  'Summarize the article in my current tab',
+  'Read this page aloud',
+];
 
 const state = {
   port: null,
@@ -23,6 +36,45 @@ const state = {
 function setStatus(text, cls) {
   els.status.textContent = text;
   els.status.className = `status ${cls || ''}`;
+  if (els.statusDot) els.statusDot.className = `dot ${cls || ''}`;
+}
+
+function shortModel(model) {
+  return MODEL_LABEL[model] || (model || '').replace(/^global\.anthropic\.claude-/, '').replace(/-\d+$/, '');
+}
+
+function renderWelcome() {
+  if (els.chat.querySelector('.welcome')) return;
+  const box = document.createElement('div');
+  box.className = 'welcome';
+
+  const h = document.createElement('div');
+  h.className = 'welcome-title';
+  h.textContent = 'Try one of these:';
+  box.appendChild(h);
+
+  const chips = document.createElement('div');
+  chips.className = 'chips';
+  for (const prompt of SAMPLE_PROMPTS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    b.textContent = prompt;
+    b.addEventListener('click', () => {
+      els.input.value = prompt;
+      els.input.focus();
+      els.input.dispatchEvent(new Event('input'));
+    });
+    chips.appendChild(b);
+  }
+  box.appendChild(chips);
+
+  appendNode(box);
+}
+
+function clearWelcome() {
+  const w = els.chat.querySelector('.welcome');
+  if (w) w.remove();
 }
 
 function appendNode(node) {
@@ -225,8 +277,8 @@ async function openSession() {
       mode: els.mode.value,
     });
     state.sessionId = result.sessionId;
-    setStatus(`connected · ${result.model}`, 'ok');
-    addMeta(`Session ${result.sessionId.slice(0, 14)}… · ${result.model}`);
+    setStatus(shortModel(result.model), 'ok');
+    renderWelcome();
   } catch (error) {
     setStatus(`error: ${error.message}`, 'error');
   }
@@ -269,7 +321,9 @@ function handleSessionEvent(event) {
       state.running = false;
       els.send.disabled = false;
       els.abort.disabled = true;
-      addMeta(`stop=${event.stop_reason} turns=${event.num_turns}${event.total_cost_usd != null ? ` cost=$${event.total_cost_usd.toFixed(4)}` : ''}`);
+      if (event.total_cost_usd != null && event.num_turns > 1) {
+        addMeta(`${event.num_turns} turns · $${event.total_cost_usd.toFixed(4)}`);
+      }
       return;
     case 'session.exit':
       state.running = false;
@@ -286,8 +340,10 @@ els.composer.addEventListener('submit', async (ev) => {
   ev.preventDefault();
   const text = els.input.value.trim();
   if (!text || !state.sessionId) return;
+  clearWelcome();
   addMessage('user', text);
   els.input.value = '';
+  els.input.style.height = 'auto';
   els.send.disabled = true;
   els.abort.disabled = false;
   state.running = true;
