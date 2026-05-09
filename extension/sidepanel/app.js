@@ -31,58 +31,84 @@ function appendNode(node) {
 }
 
 function addMessage(role, text) {
-  const div = document.createElement('div');
-  div.className = `msg ${role}`;
-  div.textContent = text;
+  const md = globalThis.__agentChromeBridgeMarkdown;
+  const wrapper = document.createElement('div');
+  wrapper.className = `msg ${role}`;
+
+  if (role === 'assistant' && md) {
+    wrapper.appendChild(md.renderMarkdown(text));
+  } else {
+    const body = document.createElement('div');
+    body.className = 'md';
+    const p = document.createElement('p');
+    p.textContent = text;
+    body.appendChild(p);
+    wrapper.appendChild(body);
+  }
 
   if (role === 'assistant') {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'speak-btn';
-    btn.textContent = 'speak';
+    btn.title = 'Read aloud';
+    btn.setAttribute('aria-label', 'Read aloud');
+    btn.textContent = '🔊';
     btn.addEventListener('click', () => {
-      if (chrome.tts.isSpeaking && chrome.tts.isSpeaking()) {
-        chrome.tts.stop();
-        btn.textContent = 'speak';
-        btn.classList.remove('active');
-        return;
-      }
-      btn.textContent = 'stop';
-      btn.classList.add('active');
-      chrome.tts.speak(div.textContent, {
-        onEvent: (event) => {
-          if (event.type === 'end' || event.type === 'interrupted' || event.type === 'cancelled' || event.type === 'error') {
-            btn.textContent = 'speak';
-            btn.classList.remove('active');
-          }
-        },
+      chrome.tts.isSpeaking((speaking) => {
+        if (speaking) {
+          chrome.tts.stop();
+          btn.textContent = '🔊';
+          btn.classList.remove('active');
+          return;
+        }
+        btn.textContent = '■';
+        btn.classList.add('active');
+        const plain = md ? md.stripMarkdown(text) : text;
+        chrome.tts.speak(plain, {
+          onEvent: (event) => {
+            if (['end', 'interrupted', 'cancelled', 'error'].includes(event.type)) {
+              btn.textContent = '🔊';
+              btn.classList.remove('active');
+            }
+          },
+        });
       });
     });
-    div.appendChild(btn);
+    wrapper.appendChild(btn);
   }
 
-  appendNode(div);
-  return div;
+  appendNode(wrapper);
+  return wrapper;
 }
 
 function addToolCard(toolUseId, name, input) {
   const div = document.createElement('div');
   div.className = 'tool-card';
+
   const header = document.createElement('div');
-  header.innerHTML = `<span class="tool-name">${name.replace(/^mcp__[^_]+__/, '')}</span> <span class="status">running…</span>`;
+  const nameEl = document.createElement('span');
+  nameEl.className = 'tool-name';
+  nameEl.textContent = name.replace(/^mcp__[^_]+__/, '');
+  const statusEl = document.createElement('span');
+  statusEl.className = 'status';
+  statusEl.textContent = 'running';
+  statusEl.dataset.state = 'running';
+  header.append(nameEl, statusEl);
   div.appendChild(header);
 
-  const details = document.createElement('details');
-  const summary = document.createElement('summary');
-  summary.textContent = 'arguments';
-  details.appendChild(summary);
-  const pre = document.createElement('pre');
-  pre.textContent = JSON.stringify(input, null, 2);
-  details.appendChild(pre);
-  div.appendChild(details);
+  if (input && Object.keys(input).length) {
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = 'arguments';
+    details.appendChild(summary);
+    const pre = document.createElement('pre');
+    pre.textContent = JSON.stringify(input, null, 2);
+    details.appendChild(pre);
+    div.appendChild(details);
+  }
 
   appendNode(div);
-  state.toolCardsById.set(toolUseId, { card: div, status: header.querySelector('.status') });
+  state.toolCardsById.set(toolUseId, { card: div, status: statusEl });
   return div;
 }
 
@@ -90,6 +116,7 @@ function addToolResult(toolUseId, content, isError) {
   const entry = state.toolCardsById.get(toolUseId);
   if (!entry) return;
   entry.status.textContent = isError ? 'error' : 'ok';
+  entry.status.dataset.state = isError ? 'error' : 'ok';
   if (isError) entry.card.classList.add('error');
   const details = document.createElement('details');
   const summary = document.createElement('summary');
@@ -107,13 +134,17 @@ function addApproval(event) {
   div.className = 'approval';
 
   const heading = document.createElement('div');
+  heading.className = 'heading';
   const shortName = event.toolName.replace(/^mcp__[^_]+__/, '');
-  heading.innerHTML = `Claude wants to run <b>${shortName}</b>.`;
+  heading.append(document.createTextNode('Claude wants to run '));
+  const b = document.createElement('b');
+  b.textContent = shortName;
+  heading.append(b, document.createTextNode('.'));
   div.appendChild(heading);
 
   const target = document.createElement('div');
   target.className = 'target';
-  target.textContent = JSON.stringify(event.input);
+  target.textContent = JSON.stringify(event.input, null, 2);
   div.appendChild(target);
 
   const actions = document.createElement('div');
@@ -283,9 +314,15 @@ els.mode.addEventListener('change', async () => {
 });
 
 els.input.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) {
+  if (ev.key === 'Enter' && !ev.shiftKey) {
+    ev.preventDefault();
     els.composer.requestSubmit();
   }
+});
+
+els.input.addEventListener('input', () => {
+  els.input.style.height = 'auto';
+  els.input.style.height = Math.min(els.input.scrollHeight, 160) + 'px';
 });
 
 connect();

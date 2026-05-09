@@ -43,7 +43,11 @@ const LOCKED_METHODS = new Set([
   'cdp.type',
 ]);
 
+const BROKER_LOG_PATH = path.join(LOG_DIR, 'broker.log');
+try { fs.mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 }); } catch { /* ignore */ }
 function log(message) {
+  const line = `[${new Date().toISOString()}] ${message}\n`;
+  try { fs.appendFileSync(BROKER_LOG_PATH, line); } catch { /* ignore */ }
   process.stderr.write(`[agent-chrome-bridge broker] ${message}\n`);
 }
 
@@ -245,6 +249,14 @@ function handleExtensionMessage(socket, message) {
     return;
   }
 
+  // Extension-originated requests (e.g. session.* from the side panel) are
+  // forwarded by the native host as {type:'request'} frames on the same
+  // extension-host socket. Treat them as client requests.
+  if (message.type === 'request' && message.id && message.method) {
+    handleClientMessage(socket, message);
+    return;
+  }
+
   sendLine(socket, { type: 'error', error: `Unexpected extension message type: ${message.type || 'missing'}` });
 }
 
@@ -252,6 +264,7 @@ function openSession(socket, message) {
   const params = message.params || {};
   const sessionId = `sess-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
   const mode = ['per-action', 'per-session', 'trust'].includes(params.mode) ? params.mode : 'per-session';
+  log(`openSession sessionId=${sessionId} mode=${mode} model=${params.model || '(default)'}`);
   let runner;
   try {
     runner = createRunner({
@@ -266,6 +279,7 @@ function openSession(socket, message) {
       },
     });
   } catch (error) {
+    log(`openSession createRunner threw: ${error.stack || error.message}`);
     sendLine(socket, { type: 'response', id: message.id, error: error.message });
     return;
   }
@@ -278,6 +292,7 @@ function openSession(socket, message) {
     pendingApprovals: new Map(),
   };
   sessions.set(sessionId, entry);
+  log(`openSession registered ${sessionId}`);
   runner.exit.then((exit) => {
     // Reject any outstanding approval waiters.
     for (const pend of entry.pendingApprovals.values()) {
@@ -432,6 +447,7 @@ function abortSessionsFor(socket) {
 }
 
 function handleClientMessage(socket, message) {
+  log(`client-msg type=${message.type || '?'} method=${message.method || '-'} id=${message.id || '-'}`);
   if (message.type === 'hello') {
     sendLine(socket, { type: 'hello', ok: true, socket: SOCKET_PATH, extensionConnected: Boolean(extensionSocket) });
     return;

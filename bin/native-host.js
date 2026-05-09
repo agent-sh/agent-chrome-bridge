@@ -2,7 +2,9 @@
 'use strict';
 
 const childProcess = require('node:child_process');
+const fs = require('node:fs');
 const net = require('node:net');
+const os = require('node:os');
 const path = require('node:path');
 const { socketPath } = require('../lib/socket-path');
 const { version: PACKAGE_VERSION } = require('../package.json');
@@ -10,11 +12,16 @@ const { version: PACKAGE_VERSION } = require('../package.json');
 const ROOT = path.resolve(__dirname, '..');
 const BROKER = path.join(ROOT, 'bin', 'broker.js');
 const SOCKET_PATH = socketPath();
+const LOG_DIR = path.join(os.homedir(), '.local', 'state', 'agent-chrome-bridge');
+const LOG_PATH = path.join(LOG_DIR, 'native-host.log');
 
+try { fs.mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 }); } catch { /* ignore */ }
 let broker = null;
 let nativeBuffer = Buffer.alloc(0);
 
 function log(message) {
+  const line = `[${new Date().toISOString()}] ${message}\n`;
+  try { fs.appendFileSync(LOG_PATH, line); } catch { /* ignore */ }
   process.stderr.write(`[agent-chrome-bridge native-host] ${message}\n`);
 }
 
@@ -26,7 +33,10 @@ function writeNative(message) {
 }
 
 function writeBroker(message) {
-  if (!broker || broker.destroyed) return;
+  if (!broker || broker.destroyed) {
+    log(`drop broker-bound (not connected): ${JSON.stringify(message).slice(0, 200)}`);
+    return;
+  }
   broker.write(`${JSON.stringify(message)}\n`);
 }
 
@@ -106,7 +116,9 @@ function handleNativeChunk(chunk) {
 
     try {
       const message = JSON.parse(body.toString('utf8'));
+      log(`from-ext ${message.type || '(tool-response)'} id=${message.id || '-'} method=${message.method || '-'}`);
       if (message.type === 'session.request' && message.id && message.method) {
+        log(`forward-to-broker request ${message.method} ${message.id}`);
         writeBroker({ type: 'request', id: message.id, method: message.method, params: message.params || {} });
         continue;
       }
@@ -117,6 +129,7 @@ function handleNativeChunk(chunk) {
         error: message.error,
       });
     } catch (error) {
+      log(`invalid ext JSON: ${error.message}`);
       writeBroker({ type: 'response', id: null, error: `Invalid extension JSON: ${error.message}` });
     }
   }

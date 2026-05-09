@@ -92,8 +92,6 @@ function registerPanelPort(port) {
     }
     panelRpc.set(message.id, { panelId, method: message.method });
     try {
-      port.dispatchCount = (port.dispatchCount || 0) + 1;
-      // Forward to native host; native-host will unwrap into a broker request.
       globalThis.__agentChromeBridge_sendToBroker({
         type: 'session.request',
         id: message.id,
