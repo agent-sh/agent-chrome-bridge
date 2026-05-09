@@ -48,6 +48,14 @@ function connectBroker(attempt = 0) {
   });
 
   socket.on('data', makeLineReader((message) => {
+    if (message.type === 'session.event') {
+      writeNative(message);
+      return;
+    }
+    if (message.type === 'response') {
+      writeNative(message);
+      return;
+    }
     if (message.id && message.method) {
       writeNative(message);
     }
@@ -98,6 +106,10 @@ function handleNativeChunk(chunk) {
 
     try {
       const message = JSON.parse(body.toString('utf8'));
+      if (message.type === 'session.request' && message.id && message.method) {
+        writeBroker({ type: 'request', id: message.id, method: message.method, params: message.params || {} });
+        continue;
+      }
       writeBroker({
         type: 'response',
         id: message.id,
