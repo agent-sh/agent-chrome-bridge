@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const BRIDGE_VERSION = '0.3.2';
+  const BRIDGE_VERSION = '0.4.0';
 
   if (globalThis.__agentChromeBridge?.version === BRIDGE_VERSION) return;
 

@@ -8,6 +8,14 @@ let reconnectTimer = null;
 let snapshotCounter = 0;
 const snapshotCache = new Map();
 
+// Panel ports keyed by a locally generated panelId. Session.event frames are
+// forwarded to the port whose sessionId matches the event's sessionId.
+const panelPorts = new Map();
+// Pending native-host RPCs initiated by a panel port. Maps request id → panel port.
+const panelRpc = new Map();
+// Session ownership: sessionId → panelId (so events fan out to the right panel).
+const sessionOwner = new Map();
+
 function connectNative() {
   if (port) return;
 
@@ -19,6 +27,15 @@ function connectNative() {
   }
 
   port.onMessage.addListener((message) => {
+    if (message.type === 'session.event') {
+      routeSessionEventToPanel(message);
+      return;
+    }
+    if (message.type === 'response') {
+      routeSessionResponseToPanel(message);
+      return;
+    }
+    // Tool RPC request from broker → run against Chrome and reply.
     dispatch(message).then(
       (result) => port?.postMessage({ id: message.id, result }),
       (error) => port?.postMessage({ id: message.id, error: error.message || String(error) }),
@@ -28,7 +45,106 @@ function connectNative() {
   port.onDisconnect.addListener(() => {
     port = null;
     scheduleReconnect();
+    // Notify panels that their session is dead.
+    for (const [panelId, panel] of panelPorts.entries()) {
+      try {
+        panel.port.postMessage({ type: 'session.event', sessionId: panel.sessionId, event: { type: 'session.exit', code: null, signal: 'BROKER_DISCONNECT' } });
+      } catch { /* ignore */ }
+    }
+    panelRpc.clear();
   });
+}
+
+function routeSessionEventToPanel(message) {
+  const panelId = sessionOwner.get(message.sessionId);
+  const panel = panelId ? panelPorts.get(panelId) : null;
+  if (!panel) return;
+  try { panel.port.postMessage(message); } catch { /* panel gone */ }
+  if (message.event?.type === 'session.exit') {
+    sessionOwner.delete(message.sessionId);
+  }
+}
+
+function routeSessionResponseToPanel(message) {
+  const entry = panelRpc.get(message.id);
+  if (!entry) return;
+  panelRpc.delete(message.id);
+  const panel = panelPorts.get(entry.panelId);
+  if (!panel) return;
+  try { panel.port.postMessage({ type: 'session.response', id: message.id, result: message.result, error: message.error, method: entry.method }); } catch { /* ignore */ }
+  // If this was a successful session.open, remember the owner for event routing.
+  if (entry.method === 'session.open' && message.result?.sessionId) {
+    panel.sessionId = message.result.sessionId;
+    sessionOwner.set(message.result.sessionId, entry.panelId);
+  }
+}
+
+let panelCounter = 0;
+function registerPanelPort(port) {
+  const panelId = `panel-${Date.now()}-${++panelCounter}`;
+  panelPorts.set(panelId, { panelId, port, sessionId: null });
+
+  port.onMessage.addListener((message) => {
+    if (!message || message.type !== 'session.request' || !message.id || !message.method) return;
+    if (!ensureBrokerPort()) {
+      port.postMessage({ type: 'session.response', id: message.id, method: message.method, error: 'Broker not connected' });
+      return;
+    }
+    panelRpc.set(message.id, { panelId, method: message.method });
+    try {
+      port.dispatchCount = (port.dispatchCount || 0) + 1;
+      // Forward to native host; native-host will unwrap into a broker request.
+      globalThis.__agentChromeBridge_sendToBroker({
+        type: 'session.request',
+        id: message.id,
+        method: message.method,
+        params: message.params || {},
+      });
+    } catch (error) {
+      panelRpc.delete(message.id);
+      port.postMessage({ type: 'session.response', id: message.id, method: message.method, error: error.message });
+    }
+  });
+
+  port.onDisconnect.addListener(() => {
+    const entry = panelPorts.get(panelId);
+    panelPorts.delete(panelId);
+    // Abort outstanding RPCs and the session if any.
+    for (const [rpcId, rpcEntry] of panelRpc.entries()) {
+      if (rpcEntry.panelId === panelId) panelRpc.delete(rpcId);
+    }
+    if (entry?.sessionId) {
+      sessionOwner.delete(entry.sessionId);
+      if (ensureBrokerPort()) {
+        globalThis.__agentChromeBridge_sendToBroker({
+          type: 'session.request',
+          id: `abort-${Date.now()}`,
+          method: 'session.abort',
+          params: { sessionId: entry.sessionId },
+        });
+      }
+    }
+  });
+}
+
+function ensureBrokerPort() {
+  connectNative();
+  return !!port;
+}
+
+globalThis.__agentChromeBridge_sendToBroker = (message) => {
+  if (!port) throw new Error('Broker not connected');
+  port.postMessage(message);
+};
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === 'agent-session') {
+    registerPanelPort(port);
+  }
+});
+
+if (chrome.sidePanel?.setPanelBehavior) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 }
 
 function scheduleReconnect() {
