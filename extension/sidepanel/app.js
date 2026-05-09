@@ -8,6 +8,9 @@ const els = {
   model: document.getElementById('model'),
   mode: document.getElementById('mode'),
   abort: document.getElementById('abort'),
+  newChat: document.getElementById('newChat'),
+  quick: document.getElementById('quick'),
+  autoSpeak: document.getElementById('autoSpeak'),
   status: document.getElementById('status'),
   statusDot: document.getElementById('statusDot'),
 };
@@ -31,6 +34,7 @@ const state = {
   rpcCounter: 0,
   running: false,
   toolCardsById: new Map(),
+  autoSpeak: false,
 };
 
 function setStatus(text, cls) {
@@ -105,6 +109,21 @@ function addMessage(role, text) {
     btn.title = 'Read aloud';
     btn.setAttribute('aria-label', 'Read aloud');
     btn.textContent = '🔊';
+
+    const plainText = md ? md.stripMarkdown(text) : text;
+    const speak = () => {
+      btn.textContent = '■';
+      btn.classList.add('active');
+      chrome.tts.speak(plainText, {
+        onEvent: (event) => {
+          if (['end', 'interrupted', 'cancelled', 'error'].includes(event.type)) {
+            btn.textContent = '🔊';
+            btn.classList.remove('active');
+          }
+        },
+      });
+    };
+
     btn.addEventListener('click', () => {
       chrome.tts.isSpeaking((speaking) => {
         if (speaking) {
@@ -113,20 +132,15 @@ function addMessage(role, text) {
           btn.classList.remove('active');
           return;
         }
-        btn.textContent = '■';
-        btn.classList.add('active');
-        const plain = md ? md.stripMarkdown(text) : text;
-        chrome.tts.speak(plain, {
-          onEvent: (event) => {
-            if (['end', 'interrupted', 'cancelled', 'error'].includes(event.type)) {
-              btn.textContent = '🔊';
-              btn.classList.remove('active');
-            }
-          },
-        });
+        speak();
       });
     });
     wrapper.appendChild(btn);
+
+    if (state.autoSpeak) {
+      chrome.tts.stop();
+      setTimeout(speak, 50);
+    }
   }
 
   appendNode(wrapper);
@@ -255,6 +269,8 @@ function connect() {
       return;
     }
     if (message.type === 'session.event') {
+      // Ignore events from superseded sessions after 'New chat'.
+      if (message.sessionId && state.sessionId && message.sessionId !== state.sessionId) return;
       handleSessionEvent(message.event);
     }
   });
@@ -379,6 +395,57 @@ els.input.addEventListener('keydown', (ev) => {
 els.input.addEventListener('input', () => {
   els.input.style.height = 'auto';
   els.input.style.height = Math.min(els.input.scrollHeight, 160) + 'px';
+});
+
+els.newChat.addEventListener('click', async () => {
+  chrome.tts.stop();
+  // Close the current session (if any) and reopen with current model/mode.
+  if (state.sessionId) {
+    try { await sendRpc('session.close', { sessionId: state.sessionId }); } catch { /* ignore */ }
+    state.sessionId = null;
+  }
+  state.toolCardsById.clear();
+  els.chat.innerHTML = '';
+  state.running = false;
+  els.send.disabled = false;
+  els.abort.disabled = true;
+  setStatus('reconnecting…');
+  // The prior session.close triggered session.exit which leaves the runner gone.
+  // Open a fresh session on the same panel port.
+  await openSession();
+});
+
+els.quick.addEventListener('click', async () => {
+  els.input.focus();
+  if (!els.input.value.trim()) {
+    els.input.placeholder = 'Quick task (Haiku + trust)…';
+    return;
+  }
+  // Temporarily swap model to haiku + mode to trust for this turn.
+  const prevModel = els.model.value;
+  const prevMode = els.mode.value;
+  els.model.value = 'haiku';
+  els.mode.value = 'trust';
+  if (state.sessionId) {
+    try { await sendRpc('session.set_mode', { sessionId: state.sessionId, mode: 'trust' }); } catch { /* ignore */ }
+  }
+  els.composer.requestSubmit();
+  // Restore UI (the session stays with whatever mode the user picked next).
+  setTimeout(() => {
+    els.model.value = prevModel;
+    els.mode.value = prevMode;
+  }, 100);
+});
+
+els.autoSpeak.addEventListener('change', () => {
+  state.autoSpeak = els.autoSpeak.checked;
+  chrome.storage?.local?.set({ autoSpeak: state.autoSpeak });
+  if (!state.autoSpeak) chrome.tts.stop();
+});
+
+chrome.storage?.local?.get({ autoSpeak: false }, (prefs) => {
+  state.autoSpeak = !!prefs.autoSpeak;
+  els.autoSpeak.checked = state.autoSpeak;
 });
 
 connect();

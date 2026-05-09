@@ -26,8 +26,17 @@
         <option value="per-action">Per-action</option>
         <option value="trust">Trust</option>
       </select>
-      <button type="button" id="abort" class="danger" disabled>Abort</button>
+      <button type="button" id="newChat" class="ghost" title="New conversation">New</button>
+      <button type="button" id="abort" class="danger" disabled title="Abort current turn">Abort</button>
     </nav>
+
+    <div class="subcontrols">
+      <label class="toggle">
+        <input type="checkbox" id="autoSpeak">
+        <span>Auto-speak replies</span>
+      </label>
+      <button type="button" id="quick" class="ghost quick" title="One-shot with Haiku + trust, for fast tasks">⚡ Quick task</button>
+    </div>
 
     <main class="chat" id="chat" aria-live="polite"></main>
 
