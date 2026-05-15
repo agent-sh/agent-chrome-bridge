@@ -763,10 +763,10 @@ const CDP_MODIFIER_BITS = {
 
 function resolveCdpModifiers(params) {
   let bits = 0;
-  if (params.modifiers !== undefined && params.modifiers !== null) {
+  if (params.modifiers != null) {
     const n = Number(params.modifiers);
-    if (!Number.isFinite(n) || n < 0) throw new Error('modifiers must be a non-negative number');
-    bits |= n & 0xf;
+    if (!Number.isInteger(n) || n < 0) throw new Error('modifiers must be a non-negative integer');
+    bits |= n;
   }
   if (Array.isArray(params.modifierKeys)) {
     for (const raw of params.modifierKeys) {
