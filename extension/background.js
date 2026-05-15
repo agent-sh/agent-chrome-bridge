@@ -748,16 +748,50 @@ async function cdpClick(params) {
   return { tab: tabSummary(tab), clicked: true, x, y, button, clickCount };
 }
 
+// CDP Input.dispatchKeyEvent modifier bitmask: Alt=1, Ctrl=2, Meta/Cmd=4, Shift=8
+const CDP_MODIFIER_BITS = {
+  alt: 1,
+  ctrl: 2,
+  control: 2,
+  meta: 4,
+  cmd: 4,
+  command: 4,
+  super: 4,
+  win: 4,
+  shift: 8,
+};
+
+function resolveCdpModifiers(params) {
+  let bits = 0;
+  if (params.modifiers !== undefined && params.modifiers !== null) {
+    const n = Number(params.modifiers);
+    if (!Number.isFinite(n) || n < 0) throw new Error('modifiers must be a non-negative number');
+    bits |= n & 0xf;
+  }
+  if (Array.isArray(params.modifierKeys)) {
+    for (const raw of params.modifierKeys) {
+      if (raw == null) continue;
+      const key = String(raw).toLowerCase().trim();
+      if (!key) continue;
+      const bit = CDP_MODIFIER_BITS[key];
+      if (bit === undefined) throw new Error(`unknown modifier key: ${raw}`);
+      bits |= bit;
+    }
+  }
+  return bits;
+}
+
 async function cdpKey(params) {
   const tab = await resolveTab(params);
   assertTabGuard(tab, params);
   if (!params.key) throw new Error('key is required');
   const key = String(params.key);
+  const modifiers = resolveCdpModifiers(params);
   await withDebugger(tab.id, async (target) => {
-    await cdpSend(target, 'Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code: params.code || key });
-    await cdpSend(target, 'Input.dispatchKeyEvent', { type: 'keyUp', key, code: params.code || key });
+    await cdpSend(target, 'Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code: params.code || key, modifiers });
+    await cdpSend(target, 'Input.dispatchKeyEvent', { type: 'keyUp', key, code: params.code || key, modifiers });
   });
-  return { tab: tabSummary(tab), pressed: true, key };
+  return { tab: tabSummary(tab), pressed: true, key, modifiers };
 }
 
 async function cdpType(params) {
