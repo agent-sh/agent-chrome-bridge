@@ -4,6 +4,12 @@
 const readline = require('node:readline');
 const { request } = require('../lib/broker-client');
 const { TOOLS, METHOD_BY_TOOL, MUTATING_TOOLS } = require('../lib/tool-registry');
+const {
+  DEFAULT_LAUNCH_ARGS,
+  detectBinary,
+  pollUntilConnected,
+  spawnDetached,
+} = require('../lib/chrome-launcher');
 const { version: PACKAGE_VERSION } = require('../package.json');
 
 const READ_ONLY = /^(1|true|yes)$/i.test(process.env.AGENT_CHROME_BRIDGE_READ_ONLY || '');
@@ -63,9 +69,12 @@ async function handle(message) {
 
   if (message.method === 'tools/call') {
     const toolName = message.params?.name;
-    const method = METHOD_BY_TOOL[toolName];
     const args = message.params?.arguments || {};
-    if (!method) {
+
+    // Tools handled locally inside the MCP server (not forwarded to the broker).
+    const localHandler = LOCAL_TOOLS[toolName];
+
+    if (!localHandler && !METHOD_BY_TOOL[toolName]) {
       respond(message.id, { ...textResult(`Unknown tool: ${toolName}`), isError: true });
       return;
     }
@@ -76,12 +85,13 @@ async function handle(message) {
     }
 
     try {
-      if (toolName === 'chrome_health') {
-        const result = await chromeHealth(args);
+      if (localHandler) {
+        const result = await localHandler(args);
         respond(message.id, textResult(result));
         return;
       }
 
+      const method = METHOD_BY_TOOL[toolName];
       const result = await request(method, args, requestOptions(method, args));
       respond(message.id, textResult(result));
     } catch (error) {
@@ -127,6 +137,97 @@ async function chromeHealth(args = {}) {
 
   return result;
 }
+
+const LAUNCH_DEFAULT_TIMEOUT_MS = 15000;
+const LAUNCH_MAX_TIMEOUT_MS = 60000;
+const LAUNCH_POLL_INTERVAL_MS = 250;
+
+/**
+ * Check whether the bridge extension is currently connected via the broker.
+ * Errors are treated as "not connected" so the launcher can keep polling
+ * across broker restarts.
+ *
+ * @returns {Promise<boolean>}
+ */
+async function isExtensionConnected() {
+  try {
+    const result = await request('bridge.health', {}, { timeoutMs: 3000 });
+    return Boolean(result?.extensionConnected);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `chrome_launch` MCP tool implementation. Detects a Chromium-family browser,
+ * spawns it detached so it outlives the MCP server, and polls the broker
+ * until the bridge extension reconnects (or the timeout elapses).
+ *
+ * @param {object} [args]
+ * @param {string} [args.binary]
+ * @param {string[]} [args.args]
+ * @param {string} [args.userDataDir]
+ * @param {number} [args.waitForExtensionMs]
+ * @param {boolean} [args.force]
+ * @returns {Promise<object>}
+ */
+async function chromeLaunch(args = {}) {
+  const force = args.force === true;
+
+  if (!force && (await isExtensionConnected())) {
+    return { status: 'already_connected', pid: null };
+  }
+
+  const detected = detectBinary({ binary: args.binary });
+  if (!detected.binary) {
+    return {
+      status: 'error',
+      error: `No Chromium-based browser found. Tried: ${detected.tried.join(', ')}. Pass \`binary\` to override.`,
+      tried: detected.tried,
+    };
+  }
+
+  const extraArgs = Array.isArray(args.args) ? args.args.slice() : DEFAULT_LAUNCH_ARGS.slice();
+  if (args.userDataDir) extraArgs.push(`--user-data-dir=${args.userDataDir}`);
+
+  const { pid, error: spawnError } = spawnDetached(detected.binary, extraArgs);
+  if (spawnError) {
+    return {
+      status: 'spawn_error',
+      binary: detected.binary,
+      error: spawnError.message || String(spawnError),
+      errno: spawnError.errno || null,
+      code: spawnError.code || null,
+    };
+  }
+
+  const waitMs = Math.max(
+    1000,
+    Math.min(LAUNCH_MAX_TIMEOUT_MS, Number(args.waitForExtensionMs) || LAUNCH_DEFAULT_TIMEOUT_MS),
+  );
+
+  const { connected, waitedMs } = await pollUntilConnected(isExtensionConnected, {
+    timeoutMs: waitMs,
+    intervalMs: LAUNCH_POLL_INTERVAL_MS,
+  });
+
+  if (connected) {
+    return { status: 'launched', pid, binary: detected.binary, waitedMs };
+  }
+
+  return {
+    status: 'timeout',
+    pid,
+    binary: detected.binary,
+    waitedMs,
+    hint: `Chrome started but the agent-chrome-bridge extension did not reconnect within ${waitMs}ms. Check chrome://extensions/ — extension may be disabled or uninstalled.`,
+  };
+}
+
+const LOCAL_TOOLS = {
+  chrome_health: chromeHealth,
+  chrome_launch: chromeLaunch,
+};
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', (line) => {

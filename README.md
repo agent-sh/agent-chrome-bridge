@@ -45,6 +45,7 @@ The doctor output includes the broker socket path, action log path, extension co
 ## Tools
 
 - `chrome_health`
+- `chrome_launch`
 - `chrome_action_log`
 - `chrome_lock_tab`
 - `chrome_unlock_tab`
@@ -82,6 +83,8 @@ The doctor output includes the broker socket path, action log path, extension co
 Read tools default to all frames and open shadow roots. Pass `includeFrames: false`, `includeShadow: false`, or a specific `frameId` to narrow the target.
 
 `chrome_health` reports the loaded MCP, broker, native host, extension background, and content-script versions. Pass `tabId` if you want the content-script probe to check a specific tab; otherwise it uses the active injectable tab or the first injectable tab it can find.
+
+`chrome_launch` starts a Chromium-based browser when the bridge extension is not connected, then polls until it reconnects. It auto-detects `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser`, `brave-browser`, and `microsoft-edge` on Linux (and the standard application paths on macOS/Windows). By default it uses your normal user profile so existing logins and the bridge extension are present. If the extension is already connected, it returns `{ status: "already_connected" }` without relaunching unless you pass `force: true`. Example: `chrome_launch({ waitForExtensionMs: 20000 })`.
 
 Mutating tools support optional guards:
 
