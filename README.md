@@ -74,7 +74,7 @@ The doctor output includes the broker socket path, action log path, extension co
 - `chrome_screenshot`
 - `chrome_cdp_health`
 - `chrome_cdp_click`
-- `chrome_cdp_key`
+- `chrome_cdp_key` (supports `modifiers` bitmask or `modifierKeys: ["ctrl"]` for Ctrl+K, Cmd+K, Shift+Tab, etc.)
 - `chrome_cdp_type`
 - `chrome_get_console`
 
@@ -99,6 +99,14 @@ Use `chrome_lock_tab` before a longer edit flow. It returns a `lockId`; pass tha
 ## Notes
 
 The normal bridge uses `chrome.scripting` and normal extension APIs. CDP tools are explicit: `chrome_cdp_click`, `chrome_cdp_key`, `chrome_cdp_type`, and `chrome_get_console` briefly attach the Chrome debugger to a tab, run one job, then detach. Chrome may show a debugger warning while those tools are attached.
+
+`chrome_cdp_key` accepts modifier keys via either a numeric `modifiers` bitmask (Alt=1, Ctrl=2, Meta/Cmd=4, Shift=8) or a friendly `modifierKeys` array. Example — open Slack's quick switcher with Ctrl+K:
+
+```json
+{ "name": "chrome_cdp_key", "arguments": { "key": "k", "modifierKeys": ["ctrl"] } }
+```
+
+The same call with the raw bitmask is `{ "key": "k", "modifiers": 2 }`. When both are supplied they are OR-combined.
 
 The extension requests Chrome's `debugger` permission for the optional CDP layer. After updating from an older version, reload the unpacked extension from `chrome://extensions` and approve any Chrome permission prompt.
 
