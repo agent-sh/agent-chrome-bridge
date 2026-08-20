@@ -17,6 +17,8 @@ const LOG_PATH = path.join(LOG_DIR, 'native-host.log');
 
 try { fs.mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 }); } catch { /* ignore */ }
 let broker = null;
+let brokerConnecting = false;
+let brokerReconnectTimer = null;
 let nativeBuffer = Buffer.alloc(0);
 
 function log(message) {
@@ -49,41 +51,47 @@ function startBroker() {
   child.unref();
 }
 
+function scheduleBrokerReconnect(attempt) {
+  if (brokerReconnectTimer) return;
+  const delayMs = Math.min(1000, 100 + (attempt * 100));
+  brokerReconnectTimer = setTimeout(() => {
+    brokerReconnectTimer = null;
+    connectBroker(attempt);
+  }, delayMs);
+}
+
 function connectBroker(attempt = 0) {
+  if (broker || brokerConnecting) return;
+  brokerConnecting = true;
   const socket = net.createConnection(SOCKET_PATH);
+  let connected = false;
 
   socket.on('connect', () => {
+    connected = true;
+    brokerConnecting = false;
     broker = socket;
     writeBroker({ type: 'hello', role: 'extension-host', pid: process.pid, version: PACKAGE_VERSION });
   });
 
   socket.on('data', makeLineReader((message) => {
-    if (message.type === 'session.event') {
-      writeNative(message);
-      return;
-    }
-    if (message.type === 'response') {
-      writeNative(message);
-      return;
-    }
-    if (message.id && message.method) {
+    if (message.type === 'response' || (message.id && message.method)) {
       writeNative(message);
     }
   }));
 
   socket.on('close', () => {
-    broker = null;
+    if (broker === socket) broker = null;
+    brokerConnecting = false;
+    scheduleBrokerReconnect(connected ? 0 : attempt + 1);
   });
 
   socket.on('error', (error) => {
-    socket.destroy();
-    if ((error.code === 'ENOENT' || error.code === 'ECONNREFUSED') && attempt < 20) {
+    if (error.code === 'ENOENT' || error.code === 'ECONNREFUSED') {
       if (attempt === 0) startBroker();
-      setTimeout(() => connectBroker(attempt + 1), 100);
-      return;
+    } else {
+      log(`failed to connect broker: ${error.message}`);
     }
-    log(`failed to connect broker: ${error.message}`);
-    process.exit(1);
+    socket.destroy();
   });
 }
 
@@ -117,11 +125,6 @@ function handleNativeChunk(chunk) {
     try {
       const message = JSON.parse(body.toString('utf8'));
       log(`from-ext ${message.type || '(tool-response)'} id=${message.id || '-'} method=${message.method || '-'}`);
-      if (message.type === 'session.request' && message.id && message.method) {
-        log(`forward-to-broker request ${message.method} ${message.id}`);
-        writeBroker({ type: 'request', id: message.id, method: message.method, params: message.params || {} });
-        continue;
-      }
       writeBroker({
         type: 'response',
         id: message.id,

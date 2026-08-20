@@ -1,12 +1,13 @@
 # Agent Chrome Bridge
 
-Shared Linux Chrome control bridge for Codex and Claude.
+Standalone Chrome control bridge for local agents.
 
-The bridge has three pieces:
+The bridge has four pieces:
 
 - `extension/`: a Manifest V3 Chrome extension loaded into your normal Chrome profile. DOM actions are injected through `extension/content-bridge.js`.
 - `bin/native-host.js`: Chrome Native Messaging host used by the extension.
-- `bin/mcp-server.js`: MCP stdio server that Codex and Claude can both use.
+- `bin/broker.js`: local Unix-socket broker shared by the native host and agent clients.
+- `bin/mcp-server.js`: MCP stdio server that local agent clients can use.
 
 The extension talks to the native host. The native host and MCP server meet at a local Unix socket broker. This lets both agents act on the same already-open Chrome windows and tabs instead of launching a separate stripped browser.
 
@@ -73,6 +74,8 @@ The doctor output includes the broker socket path, action log path, extension co
 - `chrome_wait_until_idle`
 - `chrome_screenshot`
 - `chrome_cdp_health`
+- `chrome_get_dialog`
+- `chrome_handle_dialog`
 - `chrome_cdp_click`
 - `chrome_cdp_key` (supports `modifiers` bitmask or `modifierKeys: ["ctrl"]` for Ctrl+K, Cmd+K, Shift+Tab, etc.)
 - `chrome_cdp_type`
@@ -92,13 +95,15 @@ Mutating tools support optional guards:
 - `expectedUrlIncludes`
 - `lockId`
 
-If a guard does not match the target tab, the action is refused. This is useful when both Codex and Claude can control the same browser.
+If a guard does not match the target tab, the action is refused. This is useful when multiple agents can control the same browser.
 
 Use `chrome_lock_tab` before a longer edit flow. It returns a `lockId`; pass that `lockId` to mutating tools for that tab. Other agents will be refused until the lock expires or `chrome_unlock_tab` releases it.
 
 ## Notes
 
-The normal bridge uses `chrome.scripting` and normal extension APIs. CDP tools are explicit: `chrome_cdp_click`, `chrome_cdp_key`, `chrome_cdp_type`, and `chrome_get_console` briefly attach the Chrome debugger to a tab, run one job, then detach. Chrome may show a debugger warning while those tools are attached.
+The normal bridge uses `chrome.scripting` and normal extension APIs. Dialog monitoring and explicit CDP tools use one retained debugger session per controlled tab, which Chrome 118 and newer also use to keep the extension worker alive. Chrome may show a debugger warning while a tab is monitored.
+
+The bridge enables the CDP Page domain before controlled navigation, clicks, typing, and other page operations, then keeps that tab monitored. If an `alert`, `confirm`, `prompt`, or `beforeunload` dialog blocks an action, the action returns immediately with `dialogPending: true` and the dialog metadata. `chrome_get_dialog` reads the current monitored dialog without closing it. `chrome_handle_dialog` accepts or dismisses it explicitly; pass `promptText` when accepting a prompt.
 
 `chrome_cdp_key` accepts modifier keys via either a numeric `modifiers` bitmask (Alt=1, Ctrl=2, Meta/Cmd=4, Shift=8) or a friendly `modifierKeys` array. Example — open Slack's quick switcher with Ctrl+K:
 

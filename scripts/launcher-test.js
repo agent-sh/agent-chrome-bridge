@@ -9,9 +9,14 @@ const launcherPath = require.resolve('../lib/chrome-launcher');
 const brokerClientPath = require.resolve('../lib/broker-client');
 
 const {
+  buildLaunchEnvironment,
   detectBinary,
   pollUntilConnected,
+  spawnDetached,
 } = require('../lib/chrome-launcher');
+const { MUTATING_TOOLS } = require('../lib/tool-registry');
+
+assert.equal(MUTATING_TOOLS.has('chrome_launch'), true, 'read-only mode must refuse chrome_launch');
 
 async function testDetectBinary() {
   // Linux: first PATH match wins, later candidates not probed.
@@ -169,6 +174,78 @@ async function testPolling() {
     assert.ok(out.waitedMs >= 1000, `expected waitedMs >= 1000, got ${out.waitedMs}`);
     assert.ok(probes >= 4, `expected at least 4 probes, got ${probes}`);
   }
+}
+
+async function testLaunchEnvironment() {
+  const systemdEnvironment = [
+    'DISPLAY=:0',
+    'WAYLAND_DISPLAY=wayland-0',
+    'XAUTHORITY=/run/user/1000/.mutter-Xwaylandauth.test',
+    'XDG_RUNTIME_DIR=/run/user/1000',
+    'XDG_SESSION_TYPE=wayland',
+    'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
+    'UNRELATED_SECRET=ignored',
+  ].join('\n');
+  let execOptions = null;
+
+  const env = buildLaunchEnvironment({
+    platform: 'linux',
+    env: { PATH: '/usr/bin' },
+    getuid: () => 1000,
+    exists: (candidate) => candidate === '/run/user/1000' || candidate === '/run/user/1000/bus',
+    exec: (binary, args, options) => {
+      assert.equal(binary, 'systemctl');
+      assert.deepEqual(args, ['--user', 'show-environment']);
+      execOptions = options;
+      return systemdEnvironment;
+    },
+  });
+
+  assert.equal(execOptions.env.XDG_RUNTIME_DIR, '/run/user/1000');
+  assert.equal(execOptions.env.DBUS_SESSION_BUS_ADDRESS, 'unix:path=/run/user/1000/bus');
+  assert.equal(env.DISPLAY, ':0');
+  assert.equal(env.WAYLAND_DISPLAY, 'wayland-0');
+  assert.equal(env.XAUTHORITY, '/run/user/1000/.mutter-Xwaylandauth.test');
+  assert.equal(env.XDG_RUNTIME_DIR, '/run/user/1000');
+  assert.equal(env.DBUS_SESSION_BUS_ADDRESS, 'unix:path=/run/user/1000/bus');
+  assert.equal(env.UNRELATED_SECRET, undefined);
+
+  // Explicit client values take precedence over the user-manager environment.
+  const explicit = buildLaunchEnvironment({
+    platform: 'linux',
+    env: { DISPLAY: ':9', XDG_RUNTIME_DIR: '/custom/runtime' },
+    exists: () => false,
+    exec: () => systemdEnvironment,
+  });
+  assert.equal(explicit.DISPLAY, ':9');
+  assert.equal(explicit.XDG_RUNTIME_DIR, '/custom/runtime');
+
+  // Non-Linux platforms do not probe systemd.
+  const darwin = buildLaunchEnvironment({
+    platform: 'darwin',
+    env: { PATH: '/usr/bin' },
+    exec: () => { throw new Error('systemctl must not be called'); },
+  });
+  assert.deepEqual(darwin, { PATH: '/usr/bin' });
+
+  let spawnCall = null;
+  let unrefCalled = false;
+  const spawned = spawnDetached('/usr/bin/google-chrome', ['--restore-last-session'], {
+    platform: 'linux',
+    env: { PATH: '/usr/bin' },
+    getuid: () => 1000,
+    exists: (candidate) => candidate === '/run/user/1000' || candidate === '/run/user/1000/bus',
+    exec: () => systemdEnvironment,
+    spawn: (binary, args, options) => {
+      spawnCall = { binary, args, options };
+      return { pid: 4242, unref: () => { unrefCalled = true; } };
+    },
+  });
+  assert.deepEqual(spawned, { pid: 4242, error: null });
+  assert.equal(spawnCall.options.detached, true);
+  assert.equal(spawnCall.options.stdio, 'ignore');
+  assert.equal(spawnCall.options.env.DISPLAY, ':0');
+  assert.equal(unrefCalled, true);
 }
 
 /**
@@ -352,6 +429,7 @@ async function testChromeLaunchHandler() {
 (async () => {
   await testDetectBinary();
   await testPolling();
+  await testLaunchEnvironment();
   await testChromeLaunchHandler();
   // Lightly use `path` so the import isn't dead code if the handler signature
   // changes in a future refactor.

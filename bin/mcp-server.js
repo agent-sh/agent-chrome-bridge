@@ -33,6 +33,37 @@ function textResult(value) {
   };
 }
 
+// imageResult emits an MCP image content block (plus a small text summary)
+// when a tool result carries a base64 data URL (e.g. chrome_screenshot's
+// dataUrl). MCP clients that understand image content render it
+// as an actual image to the model instead of a giant base64 text blob.
+function dataUrlParts(dataUrl) {
+  const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(dataUrl || '');
+  if (!m) return null;
+  const mimeType = m[1] || 'image/png';
+  const isBase64 = Boolean(m[2]);
+  if (!isBase64) return null; // only base64 data URLs become image blocks
+  return { mimeType, data: m[3] };
+}
+
+function imageResult(value) {
+  if (value && typeof value === 'object' && typeof value.dataUrl === 'string') {
+    const parts = dataUrlParts(value.dataUrl);
+    if (parts) {
+      // Keep a compact text summary (drop the huge dataUrl), add the image.
+      const summary = { ...value };
+      delete summary.dataUrl;
+      return {
+        content: [
+          { type: 'text', text: JSON.stringify(summary, null, 2) },
+          { type: 'image', mimeType: parts.mimeType, data: parts.data },
+        ],
+      };
+    }
+  }
+  return textResult(value);
+}
+
 function requestOptions(method, args) {
   if (method.startsWith('page.wait')) {
     const timeoutMs = Number(args?.timeoutMs || 10000);
@@ -93,7 +124,7 @@ async function handle(message) {
 
       const method = METHOD_BY_TOOL[toolName];
       const result = await request(method, args, requestOptions(method, args));
-      respond(message.id, textResult(result));
+      respond(message.id, imageResult(result));
     } catch (error) {
       respond(message.id, { ...textResult(error.message), isError: true });
     }
