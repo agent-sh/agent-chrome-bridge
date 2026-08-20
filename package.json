@@ -1,17 +1,16 @@
 {
   "name": "agent-chrome-bridge",
-  "version": "0.4.0",
+  "version": "0.7.1",
   "private": true,
-  "description": "Shared local Chrome bridge for Codex and Claude via a Chrome extension, native messaging, and MCP.",
+  "description": "Standalone local Chrome control bridge for agents via a Chrome extension, native messaging, and MCP.",
   "type": "commonjs",
   "scripts": {
     "broker": "node bin/broker.js",
     "mcp": "node bin/mcp-server.js",
-    "agent": "node bin/agent.js",
     "extension:id": "node scripts/extension-id.js",
     "install:chrome-host": "node scripts/install-native-host.js",
     "doctor": "node scripts/doctor.js",
-    "test": "node --check bin/broker.js && node --check bin/native-host.js && node --check bin/mcp-server.js && node --check bin/agent.js && node --check lib/broker-client.js && node --check lib/chrome-launcher.js && node --check lib/claude-runner.js && node --check lib/tool-registry.js && node --check extension/background.js && node --check extension/content-bridge.js && node --check extension/sidepanel/app.js && node --check extension/sidepanel/markdown.js && node --check scripts/install-native-host.js && node --check scripts/extension-id.js && node --check scripts/doctor.js && node --check scripts/smoke.js && node --check scripts/content-options-test.js && node --check scripts/session-smoke.js && node --check scripts/approve-hook.js && node --check scripts/launcher-test.js && node --check scripts/cdp-key-modifiers-test.js && node scripts/smoke.js && node scripts/content-options-test.js && node scripts/launcher-test.js && node scripts/cdp-key-modifiers-test.js"
+    "test": "node --check bin/broker.js && node --check bin/native-host.js && node --check bin/mcp-server.js && node --check lib/broker-client.js && node --check lib/chrome-launcher.js && node --check lib/tool-registry.js && node --check extension/runtime-worker.js && node --check extension/bridge-worker.js && node --check extension/service-worker.js && node --check extension/background.js && node --check extension/content-bridge.js && node --check scripts/install-native-host.js && node --check scripts/extension-id.js && node --check scripts/doctor.js && node --check scripts/smoke.js && node --check scripts/content-options-test.js && node --check scripts/launcher-test.js && node --check scripts/native-host-reconnect-test.js && node --check scripts/broker-shutdown-test.js && node --check scripts/cdp-key-modifiers-test.js && node --check scripts/modal-dialog-test.js && node scripts/smoke.js && node scripts/content-options-test.js && node scripts/launcher-test.js && node scripts/native-host-reconnect-test.js && node scripts/broker-shutdown-test.js && node scripts/cdp-key-modifiers-test.js && node scripts/modal-dialog-test.js"
   },
   "engines": {
     "node": ">=18"

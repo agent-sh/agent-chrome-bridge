@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-const crypto = require('node:crypto');
 const fs = require('node:fs');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { socketPath } = require('../lib/socket-path');
-const { createRunner } = require('../lib/claude-runner');
 const { version: PACKAGE_VERSION } = require('../package.json');
 
 const SOCKET_PATH = socketPath();
@@ -23,7 +21,6 @@ const connections = new Set();
 const recentRequests = [];
 const recentErrors = [];
 const locks = new Map();
-const sessions = new Map();
 
 const LOCKED_METHODS = new Set([
   'tabs.select',
@@ -38,6 +35,7 @@ const LOCKED_METHODS = new Set([
   'page.waitForSelector',
   'page.waitForText',
   'page.waitUntilIdle',
+  'cdp.handleDialog',
   'cdp.click',
   'cdp.key',
   'cdp.type',
@@ -130,7 +128,6 @@ function health() {
     nativeHost: extensionHostInfo,
     connections: connections.size,
     pending: pending.size,
-    sessions: sessions.size,
     locks: listLocks(),
     recentRequests: recentRequests.slice(-10),
     recentErrors: recentErrors.slice(-10),
@@ -249,201 +246,7 @@ function handleExtensionMessage(socket, message) {
     return;
   }
 
-  // Extension-originated requests (e.g. session.* from the side panel) are
-  // forwarded by the native host as {type:'request'} frames on the same
-  // extension-host socket. Treat them as client requests.
-  if (message.type === 'request' && message.id && message.method) {
-    handleClientMessage(socket, message);
-    return;
-  }
-
   sendLine(socket, { type: 'error', error: `Unexpected extension message type: ${message.type || 'missing'}` });
-}
-
-function openSession(socket, message) {
-  const params = message.params || {};
-  const sessionId = `sess-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-  const mode = ['per-action', 'per-session', 'trust'].includes(params.mode) ? params.mode : 'per-session';
-  log(`openSession sessionId=${sessionId} mode=${mode} model=${params.model || '(default)'}`);
-  let runner;
-  try {
-    runner = createRunner({
-      sessionId,
-      model: params.model,
-      awsRegion: params.awsRegion,
-      system: params.system,
-      permissionMode: params.permissionMode,
-      includePartialMessages: params.includePartialMessages === true,
-      onEvent: (event) => {
-        sendLine(socket, { type: 'session.event', sessionId, event });
-      },
-    });
-  } catch (error) {
-    log(`openSession createRunner threw: ${error.stack || error.message}`);
-    sendLine(socket, { type: 'response', id: message.id, error: error.message });
-    return;
-  }
-
-  const entry = {
-    runner,
-    socket,
-    mode,
-    sessionApprovedAt: null,
-    pendingApprovals: new Map(),
-  };
-  sessions.set(sessionId, entry);
-  log(`openSession registered ${sessionId}`);
-  runner.exit.then((exit) => {
-    // Reject any outstanding approval waiters.
-    for (const pend of entry.pendingApprovals.values()) {
-      pend.reject(new Error('Session exited before approval'));
-    }
-    entry.pendingApprovals.clear();
-    sendLine(socket, {
-      type: 'session.event',
-      sessionId,
-      event: { type: 'session.exit', code: exit.code, signal: exit.signal, stderr: exit.stderr },
-    });
-    sessions.delete(sessionId);
-  });
-
-  sendLine(socket, {
-    type: 'response',
-    id: message.id,
-    result: { sessionId, model: runner.model, awsRegion: runner.awsRegion, mode },
-  });
-}
-
-function getSession(socket, message) {
-  const sessionId = message.params?.sessionId;
-  if (!sessionId) {
-    sendLine(socket, { type: 'response', id: message.id, error: 'sessionId is required' });
-    return null;
-  }
-  const entry = sessions.get(sessionId);
-  if (!entry) {
-    sendLine(socket, { type: 'response', id: message.id, error: `Unknown sessionId ${sessionId}` });
-    return null;
-  }
-  if (entry.socket !== socket) {
-    sendLine(socket, { type: 'response', id: message.id, error: 'Session is owned by another connection' });
-    return null;
-  }
-  return entry;
-}
-
-function sessionSend(socket, message) {
-  const entry = getSession(socket, message);
-  if (!entry) return;
-  const text = String(message.params?.text || '');
-  if (!text) {
-    sendLine(socket, { type: 'response', id: message.id, error: 'text is required' });
-    return;
-  }
-  entry.runner.send(text);
-  sendLine(socket, { type: 'response', id: message.id, result: { ok: true } });
-}
-
-function sessionAbort(socket, message) {
-  const entry = getSession(socket, message);
-  if (!entry) return;
-  entry.runner.abort();
-  sendLine(socket, { type: 'response', id: message.id, result: { aborted: true } });
-}
-
-function sessionClose(socket, message) {
-  const entry = getSession(socket, message);
-  if (!entry) return;
-  entry.runner.end();
-  sendLine(socket, { type: 'response', id: message.id, result: { closing: true } });
-}
-
-function sessionSetMode(socket, message) {
-  const entry = getSession(socket, message);
-  if (!entry) return;
-  const mode = message.params?.mode;
-  if (!['per-action', 'per-session', 'trust'].includes(mode)) {
-    sendLine(socket, { type: 'response', id: message.id, error: `Invalid mode: ${mode}` });
-    return;
-  }
-  entry.mode = mode;
-  if (mode !== 'per-session') entry.sessionApprovedAt = null;
-  sendLine(socket, { type: 'response', id: message.id, result: { mode } });
-}
-
-function sessionApprove(socket, message) {
-  // Hook script calls this; no socket-ownership requirement.
-  const params = message.params || {};
-  const entry = sessions.get(params.sessionId);
-  if (!entry) {
-    sendLine(socket, { type: 'response', id: message.id, error: `Unknown sessionId ${params.sessionId}` });
-    return;
-  }
-
-  if (entry.mode === 'trust') {
-    sendLine(socket, { type: 'response', id: message.id, result: { decision: 'allow', reason: 'trust' } });
-    return;
-  }
-
-  if (entry.mode === 'per-session' && entry.sessionApprovedAt) {
-    sendLine(socket, { type: 'response', id: message.id, result: { decision: 'allow', reason: 'per-session cached' } });
-    return;
-  }
-
-  const approvalId = `appr-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-  entry.pendingApprovals.set(approvalId, {
-    resolve: (decision) => {
-      sendLine(socket, { type: 'response', id: message.id, result: decision });
-    },
-    reject: (error) => {
-      sendLine(socket, { type: 'response', id: message.id, error: error.message });
-    },
-  });
-
-  sendLine(entry.socket, {
-    type: 'session.event',
-    sessionId: params.sessionId,
-    event: {
-      type: 'approval_request',
-      approvalId,
-      toolName: params.toolName,
-      input: params.input,
-      toolUseId: params.toolUseId,
-      mode: entry.mode,
-    },
-  });
-}
-
-function sessionApproveRespond(socket, message) {
-  const entry = getSession(socket, message);
-  if (!entry) return;
-  const params = message.params || {};
-  const pend = entry.pendingApprovals.get(params.approvalId);
-  if (!pend) {
-    sendLine(socket, { type: 'response', id: message.id, error: `Unknown approvalId ${params.approvalId}` });
-    return;
-  }
-  entry.pendingApprovals.delete(params.approvalId);
-
-  if (params.decision === 'allow' && params.rememberForSession === true) {
-    entry.sessionApprovedAt = new Date().toISOString();
-  }
-
-  pend.resolve({
-    decision: params.decision === 'allow' ? 'allow' : 'deny',
-    reason: params.reason || undefined,
-  });
-
-  sendLine(socket, { type: 'response', id: message.id, result: { ok: true } });
-}
-
-function abortSessionsFor(socket) {
-  for (const [sessionId, entry] of sessions.entries()) {
-    if (entry.socket === socket) {
-      try { entry.runner.abort(); } catch { /* ignore */ }
-      sessions.delete(sessionId);
-    }
-  }
 }
 
 function handleClientMessage(socket, message) {
@@ -497,41 +300,6 @@ function handleClientMessage(socket, message) {
 
   if (message.method === 'locks.list') {
     sendLine(socket, { type: 'response', id: message.id, result: { locks: listLocks() } });
-    return;
-  }
-
-  if (message.method === 'session.open') {
-    openSession(socket, message);
-    return;
-  }
-
-  if (message.method === 'session.send') {
-    sessionSend(socket, message);
-    return;
-  }
-
-  if (message.method === 'session.abort') {
-    sessionAbort(socket, message);
-    return;
-  }
-
-  if (message.method === 'session.close') {
-    sessionClose(socket, message);
-    return;
-  }
-
-  if (message.method === 'session.set_mode') {
-    sessionSetMode(socket, message);
-    return;
-  }
-
-  if (message.method === 'session.approve') {
-    sessionApprove(socket, message);
-    return;
-  }
-
-  if (message.method === 'session.approve_respond') {
-    sessionApproveRespond(socket, message);
     return;
   }
 
@@ -590,7 +358,6 @@ function onConnection(socket) {
     for (const [id, requester] of pending.entries()) {
       if (requester === socket) pending.delete(id);
     }
-    abortSessionsFor(socket);
   });
 }
 
@@ -613,9 +380,13 @@ function start() {
     process.exit(1);
   });
 
-  process.on('SIGTERM', () => {
+  const shutdown = () => {
+    for (const socket of connections) socket.destroy();
     server.close(() => process.exit(0));
-  });
+    setTimeout(() => process.exit(0), 1000).unref();
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 start();

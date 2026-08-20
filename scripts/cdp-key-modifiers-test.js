@@ -3,12 +3,12 @@
 
 // Focused test for chrome_cdp_key modifier support.
 //
-// extension/background.js depends on chrome.* globals and can't be required in
+// extension/runtime-worker.js depends on chrome.* globals and can't be required in
 // plain Node, so we validate two things:
 //   1. The MCP tool registry exposes the new `modifiers` and `modifierKeys`
 //      params on chrome_cdp_key with correct types.
-//   2. The background.js source wires modifiers into BOTH dispatchKeyEvent
-//      calls (rawKeyDown + keyUp) and uses the documented Slack/CDP bitmask
+//   2. The service worker source wires a modifier-bearing event descriptor into
+//      the dispatchKeyEvent calls and uses the documented Slack/CDP bitmask
 //      (Alt=1, Ctrl=2, Meta=4, Shift=8) plus common aliases.
 //   3. The resolver function works: we extract resolveCdpModifiers from the
 //      source and exercise it in a sandbox with representative inputs.
@@ -40,16 +40,17 @@ assert(
 );
 assert(/modifier/i.test(tool.description), 'chrome_cdp_key description does not mention modifiers');
 
-// 2. background.js source wiring check.
-const bgPath = path.join(__dirname, '..', 'extension', 'background.js');
+// 2. Service worker source wiring check.
+const bgPath = path.join(__dirname, '..', 'extension', 'runtime-worker.js');
 const bgSrc = fs.readFileSync(bgPath, 'utf8');
 assert(/CDP_MODIFIER_BITS\s*=\s*{[^}]*alt:\s*1[^}]*ctrl:\s*2[^}]*meta:\s*4[^}]*shift:\s*8/s.test(bgSrc), 'CDP_MODIFIER_BITS table missing or wrong bit values');
-const dispatchCalls = bgSrc.match(/Input\.dispatchKeyEvent[\s\S]{0,200}?modifiers/g) || [];
-assert(dispatchCalls.length >= 2, `expected modifiers on >=2 dispatchKeyEvent calls in background.js, found ${dispatchCalls.length}`);
+assert(/const event = \{ key, code, modifiers \}/.test(bgSrc), 'CDP key event descriptor does not include modifiers');
+const dispatchCalls = bgSrc.match(/Input\.dispatchKeyEvent', \{ \.\.\.descriptor\.event/g) || [];
+assert(dispatchCalls.length >= 2, `expected the modifier-bearing descriptor on rawKeyDown and keyUp, found ${dispatchCalls.length} calls`);
 
 // 3. Functional resolver check via a tiny sandbox.
 const resolverMatch = bgSrc.match(/const CDP_MODIFIER_BITS[\s\S]*?function resolveCdpModifiers\([\s\S]*?\n\}\n/);
-assert(resolverMatch, 'could not extract resolveCdpModifiers from background.js');
+assert(resolverMatch, 'could not extract resolveCdpModifiers from runtime-worker.js');
 const sandbox = {};
 vm.createContext(sandbox);
 vm.runInContext(`${resolverMatch[0]}\nthis.resolveCdpModifiers = resolveCdpModifiers;`, sandbox);
