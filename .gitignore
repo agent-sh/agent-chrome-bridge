@@ -23,3 +23,5 @@ dist/
 build/
 coverage/
 .nyc_output/
+
+.scratch/

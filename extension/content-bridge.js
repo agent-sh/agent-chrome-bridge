@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const BRIDGE_VERSION = '0.7.1';
+  const BRIDGE_VERSION = '0.8.0';
 
   if (globalThis.__agentChromeBridge?.version === BRIDGE_VERSION) return;
 
@@ -37,16 +37,29 @@
   function snapshotPage(options = {}) {
     const maxText = numberOption(options.maxText, 12000, 0, 50000);
     const maxElements = numberOption(options.maxElements, 120, 0, 500);
-    const elements = describeElements({ limit: maxElements, includeShadow: options.includeShadow !== false });
+    const includeShadow = options.includeShadow !== false;
+    const modal = topModal(includeShadow);
+    let elements = describeElements({ limit: maxElements, includeShadow });
+    if (modal) {
+      // Content behind an open modal is usually inert, so list the modal's
+      // controls first and make sure they survive the element limit.
+      const inside = describeElements({ limit: maxElements, includeShadow, within: modal });
+      const insideRefs = new Set(inside.map((element) => element.ref));
+      inside.forEach((element) => { element.inModal = true; });
+      elements = [...inside, ...elements.filter((element) => !insideRefs.has(element.ref))].slice(0, maxElements);
+    }
+    const bodyText = document.body?.innerText || '';
 
     return {
       title: document.title,
       url: location.href,
       readyState: document.readyState,
       viewport: { width: innerWidth, height: innerHeight },
-      scroll: { x: scrollX, y: scrollY },
+      scroll: { x: scrollX, y: scrollY, maxY: Math.max(0, (document.scrollingElement?.scrollHeight || 0) - innerHeight) },
       selection: String(getSelection() || ''),
-      text: (document.body?.innerText || '').slice(0, maxText),
+      text: bodyText.slice(0, maxText),
+      textLength: bodyText.length,
+      modal: modal ? describeModal(modal) : null,
       elements,
     };
   }
@@ -180,10 +193,71 @@
     const selector = options.selector || actionableSelector();
     const limit = numberOption(options.limit, 120, 0, 500);
     return queryAllDeep(selector, options.includeShadow !== false)
+      .filter((element) => !options.within || containsDeep(options.within, element))
       .filter(visible)
       .filter((element) => matchesFilters(element, options))
       .slice(0, limit)
       .map(describeElement);
+  }
+
+  function containsDeep(container, element) {
+    for (let node = element; node; node = node.parentNode || node.host) {
+      if (node === container) return true;
+    }
+    return false;
+  }
+
+  const MODAL_SELECTOR = 'dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"]';
+
+  function topModal(includeShadow = true) {
+    const candidates = queryAllDeep(MODAL_SELECTOR, includeShadow)
+      .filter(visible)
+      .filter((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.width >= 80 && rect.height >= 40 && element.getAttribute('aria-hidden') !== 'true';
+      });
+    if (!candidates.length) return null;
+    // Prefer the candidate that owns the topmost point at its own center, then
+    // the last one in document order (later dialogs usually stack on top).
+    const hit = candidates.filter((element) => {
+      const rect = element.getBoundingClientRect();
+      const top = document.elementFromPoint?.(rect.x + rect.width / 2, rect.y + Math.min(rect.height / 2, 40));
+      return top && containsDeep(element, top);
+    });
+    return (hit.length ? hit : candidates)[(hit.length ? hit : candidates).length - 1];
+  }
+
+  function describeModal(element) {
+    const labelledBy = element.getAttribute('aria-labelledby');
+    const labelNode = labelledBy ? document.getElementById(labelledBy.split(/\s+/)[0]) : null;
+    return {
+      ref: ensureRef(element),
+      role: element.getAttribute('role') || element.localName,
+      label: normalizeSpace(element.getAttribute('aria-label') || labelNode?.innerText || '').slice(0, 120) || undefined,
+      text: normalizeSpace(element.innerText || element.textContent || '').slice(0, 300),
+    };
+  }
+
+  function pageState() {
+    const modal = topModal(true);
+    return {
+      url: location.href,
+      title: document.title,
+      modal: modal ? describeModal(modal) : null,
+    };
+  }
+
+  function settle(ms) {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      setTimeout(finish, ms);
+      requestAnimationFrame?.(() => requestAnimationFrame(() => setTimeout(finish, Math.min(ms, 50))));
+    });
   }
 
   function actionableSelector() {
@@ -323,6 +397,12 @@
       placeholder: element.getAttribute('placeholder') || undefined,
       href: element.href || undefined,
       disabled: Boolean(element.disabled || element.getAttribute('aria-disabled') === 'true'),
+      checked: element.type === 'checkbox' || element.type === 'radio' || element.getAttribute('aria-checked')
+        ? Boolean(element.checked || element.getAttribute('aria-checked') === 'true')
+        : undefined,
+      expanded: element.getAttribute('aria-expanded') ? element.getAttribute('aria-expanded') === 'true' : undefined,
+      value: valueOf(element),
+      offscreen: rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth || undefined,
       rect: {
         x: Math.round(rect.x),
         y: Math.round(rect.y),
@@ -330,6 +410,14 @@
         height: Math.round(rect.height),
       },
     };
+  }
+
+  function valueOf(element) {
+    if (element.localName === 'select') return element.selectedOptions?.[0]?.textContent?.trim() || undefined;
+    if (!('value' in element) || element.localName === 'button') return undefined;
+    if (element.type === 'password') return element.value ? '[set]' : undefined;
+    if (['checkbox', 'radio', 'submit', 'button', 'reset', 'hidden'].includes(element.type)) return undefined;
+    return element.value ? String(element.value).slice(0, 120) : undefined;
   }
 
   function ensureRef(element) {
@@ -367,9 +455,13 @@
   function elementFromTarget(target, options = {}) {
     if (target.ref) {
       const element = refElements.get(target.ref);
-      if (!element) throw new Error(`No element found for ref: ${target.ref}`);
-      if (options.typeable && !typeable(element)) throw new Error(`Element is not typeable: ${target.ref}`);
-      return element;
+      if (element?.isConnected) {
+        if (options.typeable && !typeable(element)) throw new Error(`Element is not typeable: ${target.ref}`);
+        return element;
+      }
+      // The page re-rendered since the snapshot. Fall back to the recorded
+      // selector before giving up.
+      if (!target.selector) throw new Error(`Element ${target.elementId || target.ref} is gone; take a new snapshot.`);
     }
 
     if (target.selector) {
@@ -443,16 +535,30 @@
     }
   }
 
-  function clickTarget(target) {
+  async function clickTarget(target, settleMs = 150) {
     const element = elementFromTarget(target);
     if (!element) throw new Error('Target resolved to no element');
     element.scrollIntoView({ block: 'center', inline: 'center' });
+    const described = describeElement(element);
     element.focus?.();
     element.click();
-    return { clicked: true, target: describeElement(element) };
+    await settle(settleMs);
+    return { clicked: true, target: described, page: pageState() };
   }
 
-  function typeIntoTarget(target, text, replace, submit) {
+  function elementCenter(target) {
+    const element = elementFromTarget(target);
+    if (!element) throw new Error('Target resolved to no element');
+    element.scrollIntoView({ block: 'center', inline: 'center' });
+    const rect = element.getBoundingClientRect();
+    return {
+      x: Math.round(rect.x + rect.width / 2),
+      y: Math.round(rect.y + rect.height / 2),
+      target: describeElement(element),
+    };
+  }
+
+  async function typeIntoTarget(target, text, replace, submit, settleMs = 100) {
     const element = elementFromTarget(target, { typeable: true });
     element.scrollIntoView({ block: 'center', inline: 'center' });
     element.focus();
@@ -483,7 +589,9 @@
       }
     }
 
-    return { typed: true, submitted, target: describeElement(element) };
+    const described = describeElement(element);
+    if (submitted || submit) await settle(settleMs);
+    return { typed: true, submitted, target: described, page: pageState() };
   }
 
   function setNativeValue(element, value) {
@@ -595,6 +703,8 @@
     readArticle,
     getNetworkEntries,
     clickTarget,
+    elementCenter,
+    pageState,
     typeIntoTarget,
     scrollPage,
     waitForSelectorInPage,
