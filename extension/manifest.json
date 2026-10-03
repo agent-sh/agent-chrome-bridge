@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Agent Chrome Bridge",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Standalone connector between agent MCP tools and the user's Chrome session.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4id3o4a4IfrlMNGyhXt8KXNChDhZjMUWNed3YlOOMz+Iv9WPko7VOZoYYAo/lDRfh8x8s7wMXTILvOC7F/dODAxBvw3QH76xrXCSQFdmlGu7VW8bArGp6KNskay8SiW/KUQathGP70ZCP4Rj0dxG/wu4PX/NIc0XPKAFAv/w9uvBZjjTwr9E4c2UNO7I1bWl+iZ9pfDaO/2mYBo06F4j6Z8Q715ZQBnXQpl9vZqvJhZ926l3wdaIhwlZvzR3D9RQmKxJcff514kQbdQPexTiM7+S2srwiLas7s9PjKRJNtLnB8yiRneInoCB0IETDlOycP+7GTS106CvhvnAeW9wiwIDAQAB",
   "permissions": [
@@ -9,7 +9,8 @@
     "debugger",
     "nativeMessaging",
     "scripting",
-    "tabs"
+    "tabs",
+    "webNavigation"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -19,5 +20,30 @@
   },
   "action": {
     "default_title": "Agent Chrome Bridge"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "page-hook.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_origin_as_fallback": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "dialog-relay.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    }
+  ]
 }

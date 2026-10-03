@@ -14,6 +14,15 @@ const { version: PACKAGE_VERSION } = require('../package.json');
 
 const READ_ONLY = /^(1|true|yes)$/i.test(process.env.AGENT_CHROME_BRIDGE_READ_ONLY || '');
 
+const INSTRUCTIONS = [
+  'Drives the user\'s own Chrome tabs.',
+  'Read with chrome_snapshot (compact element lines `<id> <role> "<label>" [flags]`) and act with chrome_click/chrome_type using elementId.',
+  'chrome_find is cheaper than a full snapshot when you know what you need; maxText:0 skips page text.',
+  'Navigation tools wait for load. Action results carry the new url/title, an open in-page modal, and notices for JS dialogs and popup tabs the action caused.',
+  'Confirm/prompt dialogs from your actions are dismissed by default; re-run with onDialog:"accept" to accept.',
+  'Prefer chrome_snapshot over chrome_screenshot unless you need visuals.',
+].join(' ');
+
 function respond(id, result) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id, result })}\n`);
 }
@@ -27,7 +36,8 @@ function textResult(value) {
     content: [
       {
         type: 'text',
-        text: typeof value === 'string' ? value : JSON.stringify(value, null, 2),
+        // Compact JSON: indentation alone costs ~30% more tokens per result.
+        text: typeof value === 'string' ? value : JSON.stringify(value),
       },
     ],
   };
@@ -55,7 +65,7 @@ function imageResult(value) {
       delete summary.dataUrl;
       return {
         content: [
-          { type: 'text', text: JSON.stringify(summary, null, 2) },
+          { type: 'text', text: JSON.stringify(summary) },
           { type: 'image', mimeType: parts.mimeType, data: parts.data },
         ],
       };
@@ -64,7 +74,13 @@ function imageResult(value) {
   return textResult(value);
 }
 
+const LOAD_METHODS = new Set(['page.navigate', 'tabs.create', 'tabs.reload', 'tabs.back', 'tabs.forward']);
+
 function requestOptions(method, args) {
+  if (LOAD_METHODS.has(method)) {
+    const timeoutMs = Math.min(60000, Number(args?.timeoutMs || 15000));
+    return { timeoutMs: Math.max(30000, timeoutMs + 5000) };
+  }
   if (method.startsWith('page.wait')) {
     const timeoutMs = Number(args?.timeoutMs || 10000);
     return { timeoutMs: Math.max(1000, timeoutMs + 5000) };
@@ -82,6 +98,7 @@ async function handle(message) {
       protocolVersion: message.params?.protocolVersion || '2024-11-05',
       capabilities: { tools: {} },
       serverInfo: { name: 'agent-chrome-bridge', version: PACKAGE_VERSION },
+      instructions: INSTRUCTIONS,
     });
     return;
   }
@@ -135,7 +152,13 @@ async function handle(message) {
 }
 
 async function chromeHealth(args = {}) {
+  const verbose = args.verbose === true;
+  const probeArgs = args.tabId === undefined ? {} : { tabId: args.tabId };
   const result = await request('bridge.health', {});
+  if (!verbose) {
+    delete result.recentRequests;
+    result.recentErrors = (result.recentErrors || []).slice(-3);
+  }
   result.mcp = {
     version: PACKAGE_VERSION,
     readOnly: READ_ONLY,
@@ -153,7 +176,7 @@ async function chromeHealth(args = {}) {
   if (!result.extensionConnected) return result;
 
   try {
-    const extensionInfo = await request('bridge.info', args, { timeoutMs: 5000 });
+    const extensionInfo = await request('bridge.info', probeArgs, { timeoutMs: 5000 });
     result.extension = extensionInfo.extension;
     result.contentScript = extensionInfo.contentScript;
     result.versions.extension = extensionInfo.extension?.version || null;
@@ -251,7 +274,7 @@ async function chromeLaunch(args = {}) {
     pid,
     binary: detected.binary,
     waitedMs,
-    hint: `Chrome started but the agent-chrome-bridge extension did not reconnect within ${waitMs}ms. Check chrome://extensions/ — extension may be disabled or uninstalled.`,
+    hint: `Chrome started but the agent-chrome-bridge extension did not reconnect within ${waitMs}ms. Check chrome://extensions/: the extension may be disabled or uninstalled.`,
   };
 }
 

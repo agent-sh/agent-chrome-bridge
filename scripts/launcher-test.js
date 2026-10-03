@@ -308,7 +308,7 @@ async function testChromeLaunchHandler() {
         pid,
         binary: detected.binary,
         waitedMs,
-        hint: `Chrome started but the agent-chrome-bridge extension did not reconnect within ${waitMs}ms. Check chrome://extensions/ — extension may be disabled or uninstalled.`,
+        hint: `Chrome started but the agent-chrome-bridge extension did not reconnect within ${waitMs}ms. Check chrome://extensions/: the extension may be disabled or uninstalled.`,
       };
     };
   }
