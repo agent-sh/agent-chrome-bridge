@@ -216,7 +216,7 @@ async function tabCreate(params) {
   if (params.url) options.url = params.url;
   const created = await chrome.tabs.create(options);
   if (!params.url || params.wait === false) return { tab: tabBrief(created) };
-  const load = await waitForTabLoad(created.id, loadTimeout(params), { sawLoading: true });
+  const load = await waitForTabLoad(created.id, loadTimeout(params));
   return { tab: tabBrief(load.tab || created), loaded: load.loaded, waitedMs: load.waitedMs };
 }
 
@@ -272,11 +272,11 @@ async function navigateAndWait(tabId, params, action) {
   return { tab: tabBrief(load.tab || await chrome.tabs.get(tabId)), loaded: load.loaded, waitedMs: load.waitedMs };
 }
 
-function waitForTabLoad(tabId, timeoutMs, options = {}) {
+function waitForTabLoad(tabId, timeoutMs) {
   let cancel = () => {};
   const startedAt = Date.now();
   const promise = new Promise((resolve) => {
-    let sawLoading = options.sawLoading === true;
+    let sawLoading = false;
     let finished = false;
     const finish = async (loaded) => {
       if (finished) return;
@@ -297,7 +297,8 @@ function waitForTabLoad(tabId, timeoutMs, options = {}) {
         return;
       }
       // Same-document navigations (hash changes, history.pushState) never
-      // report a loading status; settle on the tab's current state.
+      // report a loading status, and a fast page can finish before the
+      // listener attached; settle on the tab's current state.
       if (!sawLoading && Date.now() - startedAt >= 600) {
         const tab = await chrome.tabs.get(tabId).catch(() => null);
         if (!tab || tab.status === 'complete') finish(Boolean(tab));
