@@ -314,12 +314,28 @@
 
   function matchesFilters(element, options) {
     if (options.tag && element.localName !== String(options.tag).toLowerCase()) return false;
-    if (options.role && (element.getAttribute('role') || '').toLowerCase() !== String(options.role).toLowerCase()) return false;
+    if (options.role && !hasRole(element, String(options.role).toLowerCase())) return false;
     if (options.placeholder && !matchText(element.getAttribute('placeholder') || '', options.placeholder, options.exact)) return false;
     if (options.name && !matchText(element.getAttribute('name') || '', options.name, options.exact)) return false;
     if (options.href && !String(element.href || '').toLowerCase().includes(String(options.href).toLowerCase())) return false;
     if (options.text && !matchText(searchText(element), options.text, options.exact)) return false;
     return true;
+  }
+
+  const INPUT_ROLES = { button: 'button', submit: 'button', reset: 'button', image: 'button', checkbox: 'checkbox', radio: 'radio', range: 'slider', search: 'searchbox' };
+
+  // The explicit role, else the one HTML implies. The snapshot shows a native element by its tag, so the tag matches too.
+  function hasRole(element, role) {
+    const explicit = (element.getAttribute('role') || '').toLowerCase();
+    if (explicit) return explicit === role;
+    const tag = element.localName;
+    if (role === tag) return true;
+    if (tag === 'button' || tag === 'summary') return role === 'button';
+    if (tag === 'a' || tag === 'area') return role === 'link' && Boolean(element.href);
+    if (tag === 'select') return role === 'combobox' || role === 'listbox';
+    if (tag === 'textarea') return role === 'textbox';
+    if (tag === 'input') return role === (INPUT_ROLES[String(element.type || element.getAttribute('type') || 'text').toLowerCase()] || 'textbox');
+    return false;
   }
 
   function matchText(haystack, needle, exact) {
