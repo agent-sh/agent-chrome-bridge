@@ -30,6 +30,8 @@ const nodes = [
   element('a', 'Docs', {}, { href: 'https://example.test/docs' }),
   element('div', 'Custom', { role: 'button', tabindex: '0' }),
   element('input', 'Subscribe', { type: 'submit' }, { type: 'submit' }),
+  element('input', 'Count', { type: 'number' }, { type: 'number' }),
+  element('input', 'Upload', { type: 'file' }, { type: 'file' }),
 ];
 const document = { title: 't', readyState: 'complete', documentElement: {}, querySelectorAll: (s) => (s === '*' ? [] : nodes) };
 document.body = { innerText: '', textContent: '', querySelectorAll: () => [], getRootNode: () => document };
@@ -60,5 +62,9 @@ assert.deepEqual(texts({ role: 'button' }), ['Connect device to tailnet', 'Custo
 assert.deepEqual(texts({ role: 'link' }), ['Docs']);
 // The snapshot names a native element by its tag, so the tag works as a role too.
 assert.deepEqual(texts({ role: 'a' }), ['Docs']);
+assert.deepEqual(texts({ role: 'input[submit]' }), ['Subscribe']);
+assert.deepEqual(texts({ role: 'spinbutton' }), ['Count']);
+// A file input has no implied role, so it is not a textbox.
+assert.deepEqual(texts({ role: 'textbox' }), []);
 
 process.stdout.write('Role filter OK\n');

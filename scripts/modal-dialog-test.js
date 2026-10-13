@@ -86,7 +86,11 @@ function loadWorker({ contentMissing = false } = {}) {
       lastError: null,
     },
     tabs: {
-      get: async () => tab,
+      get: async (id) => {
+        if (id !== tab.id) throw new Error(`No tab with id: ${id}.`);
+        return tab;
+      },
+      remove: async () => {},
       query: async () => [tab],
       onCreated: events.tabCreated,
       onRemoved: events.tabRemoved,
@@ -287,6 +291,14 @@ const controlOf = (script) => JSON.parse(script.args[3] || script.args[1]);
     assert(steps.includes('inject:content-bridge.js'));
     assert(steps.includes('inject:page-hook.js@MAIN'));
     assert.equal(steps.filter((step) => step === 'content:clickTarget').length, 1);
+  }
+
+  {
+    // A tab that closed itself (an auth popup) is already closed: chrome_close_tab succeeds.
+    const { dispatch } = loadWorker();
+    const gone = await dispatch({ method: 'tabs.close', params: { tabId: 99 } });
+    assert.equal(gone.alreadyClosed, true);
+    assert.equal(gone.tabId, 99);
   }
 
   process.stdout.write('Modal dialog OK\n');
