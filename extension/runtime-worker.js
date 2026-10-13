@@ -222,7 +222,12 @@ async function tabCreate(params) {
 
 async function tabClose(params) {
   if (params.tabId === undefined || params.tabId === null) throw new Error('tabId is required');
-  const tab = await chrome.tabs.get(Number(params.tabId));
+  const tab = await chrome.tabs.get(Number(params.tabId)).catch(() => null);
+  // A tab that closed itself (an auth popup) or that the user closed is already where the caller wants it.
+  if (!tab) {
+    forgetTab(Number(params.tabId));
+    return { closed: true, alreadyClosed: true, tabId: Number(params.tabId) };
+  }
   await chrome.tabs.remove(tab.id);
   forgetTab(tab.id);
   return { closed: true, tab: tabBrief(tab) };

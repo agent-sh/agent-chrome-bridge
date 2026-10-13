@@ -314,12 +314,37 @@
 
   function matchesFilters(element, options) {
     if (options.tag && element.localName !== String(options.tag).toLowerCase()) return false;
-    if (options.role && (element.getAttribute('role') || '').toLowerCase() !== String(options.role).toLowerCase()) return false;
+    if (options.role && !hasRole(element, String(options.role).toLowerCase())) return false;
     if (options.placeholder && !matchText(element.getAttribute('placeholder') || '', options.placeholder, options.exact)) return false;
     if (options.name && !matchText(element.getAttribute('name') || '', options.name, options.exact)) return false;
     if (options.href && !String(element.href || '').toLowerCase().includes(String(options.href).toLowerCase())) return false;
     if (options.text && !matchText(searchText(element), options.text, options.exact)) return false;
     return true;
+  }
+
+  // Implicit roles of <input> by type (HTML-AAM); types missing here (file, color, date...) have none.
+  const INPUT_ROLES = {
+    button: 'button', submit: 'button', reset: 'button', image: 'button',
+    checkbox: 'checkbox', radio: 'radio', range: 'slider', number: 'spinbutton', search: 'searchbox',
+    text: 'textbox', email: 'textbox', tel: 'textbox', url: 'textbox', password: 'textbox',
+  };
+
+  // The explicit role, else the one HTML implies. The snapshot shows a native element by its tag, so the tag matches too.
+  function hasRole(element, role) {
+    const explicit = (element.getAttribute('role') || '').toLowerCase();
+    if (explicit) return explicit === role;
+    const tag = element.localName;
+    const type = String(element.type || element.getAttribute('type') || 'text').toLowerCase();
+    if (role === tag || (tag === 'input' && role === `input[${type}]`)) return true;
+    if (tag === 'button' || tag === 'summary') return role === 'button';
+    if (tag === 'a' || tag === 'area') return role === 'link' && Boolean(element.href);
+    if (tag === 'select') return role === 'combobox' || role === 'listbox';
+    if (tag === 'textarea') return role === 'textbox';
+    if (tag === 'input') {
+      const implied = INPUT_ROLES[type];
+      return role === (implied === 'textbox' && element.getAttribute('list') ? 'combobox' : implied);
+    }
+    return false;
   }
 
   function matchText(haystack, needle, exact) {
