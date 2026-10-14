@@ -1,5 +1,9 @@
 # Agent Chrome Bridge
 
+[![npm](https://img.shields.io/npm/v/@agent-sh/chrome-bridge)](https://www.npmjs.com/package/@agent-sh/chrome-bridge)
+[![CI](https://github.com/avifenesh/agent-chrome-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/avifenesh/agent-chrome-bridge/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Let Claude Code and Codex drive the Chrome you already have open** — your tabs, your logins, your profile — through one shared MCP server.
 
 No separate headless browser, no re-login, no cookie export. Agents read pages as compact element lists, click and type by element id, and share the browser safely with tab locks and URL guards.
@@ -7,6 +11,7 @@ No separate headless browser, no re-login, no cookie export. Agents read pages a
 - **Linux** (primary) and **macOS**
 - **Claude Code** and **Codex** (any MCP stdio client works)
 - Node.js ≥ 18, Google Chrome or another Chromium browser
+- No runtime dependencies
 
 ---
 
@@ -41,53 +46,52 @@ Because every agent goes through the same broker, Claude and Codex act on the **
 
 ## Quick start
 
-About two minutes. Run everything from the repository root.
+About two minutes.
 
-**1. Clone**
-
-```bash
-git clone https://github.com/avifenesh/agent-chrome-bridge.git
-cd agent-chrome-bridge
-```
-
-There are no npm dependencies to install.
-
-**2. Register the native messaging host**
+**1. Install**
 
 ```bash
-npm run install:chrome-host
+npx @agent-sh/chrome-bridge@latest setup
 ```
 
-This writes the host manifest for your platform and a small launcher script that pins your current `node` binary (Chrome starts native hosts with an almost empty `PATH`, so nvm/asdf shims would not be found):
+`setup` does three things, and is safe to re-run:
 
-| Platform | Host manifest location |
+- Copies the bridge to `~/.local/share/agent-chrome-bridge/app`, a stable location that does not move with the npx cache or your Node version.
+- Registers the Chrome native messaging host. Chrome starts native hosts with an almost empty `PATH`, so the host goes through a small launcher that pins your current `node` binary.
+- Registers the MCP server with every agent CLI it finds on your `PATH`:
+
+| Client | Registered as |
+|---|---|
+| Claude Code | `agent-chrome-bridge` (user scope) |
+| Codex | `agent_chrome_bridge` |
+
+Options: `--claude` or `--codex` to register with one client only, `--no-mcp` to skip registration, `--force-mcp` to replace existing entries. Existing entries are left alone by default, so per-tool approval settings you already configured survive.
+
+Prefer a global install? `npm i -g @agent-sh/chrome-bridge && agent-chrome-bridge setup` does the same thing.
+
+**2. Load the extension**
+
+1. Open `chrome://extensions` and turn on **Developer mode**.
+2. Click **Load unpacked** and choose the folder `setup` printed: `~/.local/share/agent-chrome-bridge/app/extension` (`agent-chrome-bridge where` prints it again).
+3. The ID should be `pfcpgdlnhaagndelcbdpopojfgalmbkf`. It is fixed by the key in `manifest.json`, so it is the same on every machine.
+
+**3. Check it**
+
+```bash
+npx @agent-sh/chrome-bridge doctor
+```
+
+Look for `"extensionConnected": true` and matching versions for every component. Then restart your agent (in Claude Code, `/mcp` reconnects) and ask it to call `chrome_health`.
+
+| Platform | Native host manifest |
 |---|---|
 | Linux | `~/.config/google-chrome/NativeMessagingHosts/dev.agent_chrome_bridge.json` |
 | macOS | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/dev.agent_chrome_bridge.json` |
 
-**3. Load the extension**
-
-1. Open `chrome://extensions` and turn on **Developer mode**.
-2. Click **Load unpacked** and pick this repository's `extension/` folder.
-3. Confirm the ID is `pfcpgdlnhaagndelcbdpopojfgalmbkf` (`npm run extension:id` prints the expected value). The ID is fixed by the key in `manifest.json`, so it is the same on every machine.
-
-**4. Register the MCP server with your agents**
-
-```bash
-npm run install:mcp
-```
-
-This finds `claude` and/or `codex` on your `PATH` and registers the server with each, using absolute paths:
-
-| Client | Registered as | Equivalent manual command |
-|---|---|---|
-| Claude Code | `agent-chrome-bridge` (user scope) | `claude mcp add -s user agent-chrome-bridge -- "$(which node)" "$PWD/bin/mcp-server.js"` |
-| Codex | `agent_chrome_bridge` | `codex mcp add agent_chrome_bridge -- "$(which node)" "$PWD/bin/mcp-server.js"` |
-
-Options: `--claude` or `--codex` to target one client, `--force` to replace an existing entry, `--dry-run` to print the commands without running them. Existing entries are left alone by default, so per-tool approval settings you already configured survive.
-
 <details>
-<summary>Prefer editing config files by hand?</summary>
+<summary>Other MCP clients, or editing config files by hand</summary>
+
+`agent-chrome-bridge where` prints the exact command. Use absolute paths, because MCP clients may start servers without your shell's `PATH`.
 
 Claude Code (`~/.claude.json`, or a project `.mcp.json`):
 
@@ -96,7 +100,7 @@ Claude Code (`~/.claude.json`, or a project `.mcp.json`):
   "mcpServers": {
     "agent-chrome-bridge": {
       "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/agent-chrome-bridge/bin/mcp-server.js"]
+      "args": ["/home/you/.local/share/agent-chrome-bridge/app/bin/mcp-server.js"]
     }
   }
 }
@@ -107,18 +111,20 @@ Codex (`~/.codex/config.toml`):
 ```toml
 [mcp_servers.agent_chrome_bridge]
 command = "/absolute/path/to/node"
-args = ["/absolute/path/to/agent-chrome-bridge/bin/mcp-server.js"]
+args = ["/home/you/.local/share/agent-chrome-bridge/app/bin/mcp-server.js"]
 ```
 
 </details>
 
-**5. Check it**
+### CLI reference
 
-```bash
-npm run doctor
-```
-
-Look for `"extensionConnected": true` and matching versions for every component. Then restart your agent (in Claude Code, `/mcp` reconnects) and ask it to call `chrome_health`.
+| Command | What it does |
+|---|---|
+| `agent-chrome-bridge setup` | Install or upgrade (see above). |
+| `agent-chrome-bridge doctor` | Broker, extension and native host diagnostics. |
+| `agent-chrome-bridge where` | Print the install folder, extension folder and MCP command. |
+| `agent-chrome-bridge mcp` | Run the MCP stdio server directly. |
+| `agent-chrome-bridge uninstall` | Remove the native host manifest, MCP entries and installed copy. |
 
 ## Using it
 
@@ -238,7 +244,8 @@ All optional.
 | `AGENT_CHROME_BRIDGE_READ_ONLY` | unset | `1` refuses mutating tools on that MCP server. |
 | `AGENT_CHROME_BRIDGE_SOCKET` | see below | Broker socket path. |
 | `AGENT_CHROME_BRIDGE_LOG_DIR` | `~/.local/state/agent-chrome-bridge` | Broker and action logs. |
-| `AGENT_CHROME_BRIDGE_HOST_DIR` | per-platform (above) | Where `install:chrome-host` writes the host manifest, e.g. for Chromium or Brave. |
+| `AGENT_CHROME_BRIDGE_HOST_DIR` | per-platform (above) | Where `setup` writes the native host manifest, e.g. for Chromium or Brave. |
+| `AGENT_CHROME_BRIDGE_HOME` | `$XDG_DATA_HOME/agent-chrome-bridge`, else `~/.local/share/agent-chrome-bridge` | Where `setup` installs the runtime. |
 
 The broker socket lives in `$XDG_RUNTIME_DIR`, else `/run/user/<uid>` (the usual Linux case), else `~/.local/state/agent-chrome-bridge` (the usual macOS case). Every process resolves the same directory, which matters on macOS where Chrome-launched and terminal-launched processes get different `TMPDIR`s.
 
@@ -246,34 +253,40 @@ The action log is sanitized: fields such as `text`, `password`, `token`, `secret
 
 ## Troubleshooting
 
-Start with `npm run doctor`; its `nativeMessaging` section shows whether the host manifest exists and points at this checkout.
+Start with `agent-chrome-bridge doctor`; its `nativeMessaging` section shows whether the host manifest exists and points at the installed copy.
 
 | Symptom | Fix |
 |---|---|
-| `extensionConnected: false` | Reload the extension in `chrome://extensions`. If it persists, rerun `npm run install:chrome-host` and check that the manifest `path` matches. |
-| Extension ID differs from `pfcpgdlnhaagndelcbdpopojfgalmbkf` | You loaded a different folder; load this repo's `extension/`. |
-| Worked, then broke after switching Node versions | The launcher pins the node binary used at install time. Rerun `npm run install:chrome-host`, and `npm run install:mcp -- --force`. |
-| Agent does not list `chrome_*` tools | Restart the agent after `install:mcp` (in Claude Code, `/mcp`). Check `claude mcp list` / `codex mcp list`. |
+| `extensionConnected: false` | Reload the extension in `chrome://extensions`. If it persists, rerun `setup` and check that the manifest `path` matches. |
+| Extension ID differs from `pfcpgdlnhaagndelcbdpopojfgalmbkf` | You loaded a different folder; load the one `agent-chrome-bridge where` prints. |
+| Worked, then broke after removing a Node version | The launcher and MCP entries pin the node binary used at setup. Rerun `setup --force-mcp`. |
+| Agent does not list `chrome_*` tools | Restart the agent after `setup` (in Claude Code, `/mcp`). Check `claude mcp list` / `codex mcp list`. |
 | Versions differ between components in `chrome_health` | Old code still loaded somewhere: reload the extension and restart the agent. |
-| Using Chromium, Brave or Edge | Install the host into that browser's `NativeMessagingHosts` folder with `AGENT_CHROME_BRIDGE_HOST_DIR=... npm run install:chrome-host`. |
+| Using Chromium, Brave or Edge | Point setup at that browser's `NativeMessagingHosts` folder: `AGENT_CHROME_BRIDGE_HOST_DIR=... agent-chrome-bridge setup`. |
 
 ## Updating
 
 ```bash
-git pull
-npm run install:chrome-host   # refreshes the launcher and manifest
+npx @agent-sh/chrome-bridge@latest setup
 ```
 
-Then reload the extension in `chrome://extensions` and restart your agents. The extension needs Chrome's `debugger` permission (for the optional CDP tools) and `webNavigation` (for popup tracking); Chrome may ask you to approve them after an update.
+Then click reload on the extension in `chrome://extensions` and restart your agents. The extension needs Chrome's `debugger` permission (for the optional CDP tools) and `webNavigation` (for popup tracking); Chrome may ask you to approve them after an update.
 
 ## Development
 
+Work from a checkout; the npm scripts install from the checkout instead of the copied runtime, and Chrome loads `extension/` from the repo:
+
 ```bash
-npm test     # syntax checks plus unit tests, no browser needed
+git clone https://github.com/avifenesh/agent-chrome-bridge.git && cd agent-chrome-bridge
+npm run install:chrome-host   # native host -> this checkout
+npm run install:mcp           # MCP entries -> this checkout (--force to replace)
+npm test                      # syntax checks plus unit tests, no browser needed
 CHROME_BIN=/path/to/chrome-for-testing npm run e2e
 ```
 
 `npm run e2e` runs the bridge end to end against an isolated headless Chrome. Stable Chrome ignores `--load-extension`, so use Chrome for Testing or Chromium. Set `E2E_MEASURE_URL` to print compact vs verbose output sizes for a real page. Scratch files go to `.scratch/e2e` and are removed afterwards.
+
+**Releasing:** bump `version` in `package.json`, `extension/manifest.json` and `BRIDGE_VERSION` in `extension/content-bridge.js` (tests fail if they drift), merge, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The release workflow checks the versions, runs the tests, publishes to npm with provenance and creates the GitHub release.
 
 ## License
 

@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ["20", "24"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+      - name: Pack and install smoke test
+        shell: bash
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          npm i -g --prefix "$RUNNER_TEMP/prefix" "$RUNNER_TEMP"/agent-sh-chrome-bridge-*.tgz
+          export HOME="$RUNNER_TEMP/home" AGENT_CHROME_BRIDGE_HOST_DIR="$RUNNER_TEMP/hosts"
+          "$RUNNER_TEMP/prefix/bin/agent-chrome-bridge" setup --no-mcp
+          test -x "$HOME/.local/share/agent-chrome-bridge/app/bin/native-host-launcher.sh"
+          "$RUNNER_TEMP/prefix/bin/agent-chrome-bridge" --version

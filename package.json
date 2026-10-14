@@ -1,10 +1,53 @@
 {
-  "name": "agent-chrome-bridge",
-  "version": "0.8.0",
-  "private": true,
-  "description": "Standalone local Chrome control bridge for agents via a Chrome extension, native messaging, and MCP.",
+  "name": "@agent-sh/chrome-bridge",
+  "version": "0.9.0",
+  "description": "Let Claude Code, Codex and other MCP agents drive your real Chrome: your tabs, logins and profile, via an extension, native messaging and one shared MCP server.",
   "license": "MIT",
+  "author": "Avi Fenesh",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "chrome",
+    "chrome-extension",
+    "browser-automation",
+    "claude-code",
+    "codex",
+    "agent",
+    "native-messaging"
+  ],
+  "homepage": "https://github.com/avifenesh/agent-chrome-bridge#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/avifenesh/agent-chrome-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/avifenesh/agent-chrome-bridge/issues"
+  },
   "type": "commonjs",
+  "bin": {
+    "agent-chrome-bridge": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "extension/",
+    "scripts/install-native-host.js",
+    "scripts/install-mcp.js",
+    "scripts/extension-id.js",
+    "scripts/doctor.js",
+    "!bin/native-host-launcher.sh"
+  ],
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "broker": "node bin/broker.js",
     "mcp": "node bin/mcp-server.js",
@@ -13,9 +56,6 @@
     "install:mcp": "node scripts/install-mcp.js",
     "doctor": "node scripts/doctor.js",
     "e2e": "node scripts/e2e-chrome.js",
-    "test": "node --check bin/broker.js && node --check bin/native-host.js && node --check bin/mcp-server.js && node --check lib/broker-client.js && node --check lib/chrome-launcher.js && node --check lib/native-host-config.js && node --check lib/tool-registry.js && node --check extension/runtime-worker.js && node --check extension/bridge-worker.js && node --check extension/service-worker.js && node --check extension/background.js && node --check extension/content-bridge.js && node --check extension/page-hook.js && node --check extension/dialog-relay.js && node --check scripts/install-native-host.js && node --check scripts/install-mcp.js && node --check scripts/native-host-config-test.js && node --check scripts/broker-singleton-test.js && node --check scripts/extension-id.js && node --check scripts/doctor.js && node --check scripts/smoke.js && node --check scripts/content-options-test.js && node --check scripts/launcher-test.js && node --check scripts/native-host-reconnect-test.js && node --check scripts/broker-shutdown-test.js && node --check scripts/cdp-key-modifiers-test.js && node --check scripts/modal-dialog-test.js && node --check scripts/page-hook-test.js && node --check scripts/role-filter-test.js && node --check scripts/e2e-chrome.js && node scripts/smoke.js && node scripts/content-options-test.js && node scripts/launcher-test.js && node scripts/native-host-reconnect-test.js && node scripts/broker-shutdown-test.js && node scripts/broker-singleton-test.js && node scripts/native-host-config-test.js && node scripts/cdp-key-modifiers-test.js && node scripts/modal-dialog-test.js && node scripts/page-hook-test.js && node scripts/role-filter-test.js"
-  },
-  "engines": {
-    "node": ">=18"
+    "test": "node --check bin/broker.js && node --check bin/native-host.js && node --check bin/mcp-server.js && node --check lib/broker-client.js && node --check lib/chrome-launcher.js && node --check lib/native-host-config.js && node --check lib/app-home.js && node --check bin/cli.js && node --check lib/tool-registry.js && node --check extension/runtime-worker.js && node --check extension/bridge-worker.js && node --check extension/service-worker.js && node --check extension/background.js && node --check extension/content-bridge.js && node --check extension/page-hook.js && node --check extension/dialog-relay.js && node --check scripts/install-native-host.js && node --check scripts/install-mcp.js && node --check scripts/native-host-config-test.js && node --check scripts/broker-singleton-test.js && node --check scripts/cli-setup-test.js && node --check scripts/extension-id.js && node --check scripts/doctor.js && node --check scripts/smoke.js && node --check scripts/content-options-test.js && node --check scripts/launcher-test.js && node --check scripts/native-host-reconnect-test.js && node --check scripts/broker-shutdown-test.js && node --check scripts/cdp-key-modifiers-test.js && node --check scripts/modal-dialog-test.js && node --check scripts/page-hook-test.js && node --check scripts/role-filter-test.js && node --check scripts/e2e-chrome.js && node scripts/smoke.js && node scripts/content-options-test.js && node scripts/launcher-test.js && node scripts/native-host-reconnect-test.js && node scripts/broker-shutdown-test.js && node scripts/broker-singleton-test.js && node scripts/native-host-config-test.js && node scripts/cli-setup-test.js && node scripts/cdp-key-modifiers-test.js && node scripts/modal-dialog-test.js && node scripts/page-hook-test.js && node scripts/role-filter-test.js"
   }
 }
