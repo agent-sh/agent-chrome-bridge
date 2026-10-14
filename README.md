@@ -274,3 +274,7 @@ CHROME_BIN=/path/to/chrome-for-testing npm run e2e
 ```
 
 `npm run e2e` runs the bridge end to end against an isolated headless Chrome. Stable Chrome ignores `--load-extension`, so use Chrome for Testing or Chromium. Set `E2E_MEASURE_URL` to print compact vs verbose output sizes for a real page. Scratch files go to `.scratch/e2e` and are removed afterwards.
+
+## License
+
+[MIT](LICENSE)
