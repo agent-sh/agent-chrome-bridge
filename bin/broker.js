@@ -361,32 +361,89 @@ function onConnection(socket) {
   });
 }
 
-function start() {
-  try {
-    if (fs.existsSync(SOCKET_PATH)) fs.unlinkSync(SOCKET_PATH);
-  } catch (error) {
-    log(`failed to remove stale socket: ${error.message}`);
-    process.exit(1);
-  }
-
-  const server = net.createServer(onConnection);
-  server.listen(SOCKET_PATH, () => {
-    fs.chmodSync(SOCKET_PATH, 0o600);
-    log(`listening on ${SOCKET_PATH}`);
+function tryBind(server) {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.removeListener('listening', onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.removeListener('error', onError);
+      resolve();
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(SOCKET_PATH);
   });
+}
 
-  server.on('error', (error) => {
-    log(error.stack || error.message);
-    process.exit(1);
+function probeExistingBroker() {
+  return new Promise((resolve) => {
+    const probe = net.createConnection(SOCKET_PATH);
+    const settle = (alive) => {
+      probe.removeAllListeners();
+      probe.destroy();
+      resolve(alive);
+    };
+    probe.once('connect', () => settle(true));
+    probe.once('error', () => settle(false));
+    setTimeout(() => settle(false), 500).unref();
   });
+}
 
+async function start() {
+  // Singleton bind: try-listen first; if EADDRINUSE, probe whether the prior
+  // broker is alive. Yield if it is; only unlink + retry if it's dead. Without
+  // this, every broker startup unlink'd the socket and clobbered any prior
+  // broker (and its native-host connection), producing the broker-race we hit
+  // when mcp-server and native-host both spawned brokers concurrently.
+  // Registered before binding: the socket file appears before 'listening'
+  // fires, so a SIGTERM in that window must still exit cleanly.
+  let activeServer = null;
   const shutdown = () => {
     for (const socket of connections) socket.destroy();
-    server.close(() => process.exit(0));
+    if (!activeServer) process.exit(0);
+    activeServer.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 1000).unref();
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const server = net.createServer(onConnection);
+    activeServer = server;
+    try {
+      await tryBind(server);
+      fs.chmodSync(SOCKET_PATH, 0o600);
+      log(`listening on ${SOCKET_PATH}`);
+      server.on('error', (error) => {
+        log(error.stack || error.message);
+        process.exit(1);
+      });
+      return;
+    } catch (error) {
+      server.close();
+      if (error.code !== 'EADDRINUSE') {
+        log(`bind failed: ${error.stack || error.message}`);
+        process.exit(1);
+      }
+      const alive = await probeExistingBroker();
+      if (alive) {
+        log('another broker is already listening; exiting');
+        process.exit(0);
+      }
+      try {
+        fs.unlinkSync(SOCKET_PATH);
+      } catch (unlinkError) {
+        if (unlinkError.code !== 'ENOENT') {
+          log(`failed to remove stale socket: ${unlinkError.message}`);
+          process.exit(1);
+        }
+      }
+    }
+  }
+  log('exhausted bind attempts');
+  process.exit(1);
 }
 
 start();
