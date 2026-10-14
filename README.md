@@ -1,87 +1,130 @@
 # Agent Chrome Bridge
 
-Standalone Chrome control bridge for local agents.
+**Let Claude Code and Codex drive the Chrome you already have open** — your tabs, your logins, your profile — through one shared MCP server.
 
-The bridge has four pieces:
+No separate headless browser, no re-login, no cookie export. Agents read pages as compact element lists, click and type by element id, and share the browser safely with tab locks and URL guards.
 
-- `extension/`: a Manifest V3 Chrome extension loaded into your normal Chrome profile. DOM actions are injected through `extension/content-bridge.js`.
-- `bin/native-host.js`: Chrome Native Messaging host used by the extension.
-- `bin/broker.js`: local Unix-socket broker shared by the native host and agent clients.
-- `bin/mcp-server.js`: MCP stdio server that local agent clients can use.
+- **Linux** (primary) and **macOS**
+- **Claude Code** and **Codex** (any MCP stdio client works)
+- Node.js ≥ 18, Google Chrome or another Chromium browser
 
-The extension talks to the native host. The native host and MCP server meet at a local Unix socket broker. This lets both agents act on the same already-open Chrome windows and tabs instead of launching a separate stripped browser.
+---
 
-## Install
+## Contents
 
-1. Register the native messaging host:
+- [How it works](#how-it-works)
+- [Quick start](#quick-start)
+- [Using it](#using-it)
+- [Tools](#tools)
+- [Dialogs, popups and modals](#dialogs-popups-and-modals)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
+- [Updating](#updating)
+- [Development](#development)
+
+## How it works
+
+```text
+  Claude Code ── mcp-server.js ──┐
+                                 ├──► broker.js ◄──► native-host.js ◄──► extension ──► your Chrome tabs
+  Codex ──────── mcp-server.js ──┘    Unix socket    Native Messaging     (your profile, your logins)
+```
+
+| Piece | Role |
+|---|---|
+| `extension/` | Manifest V3 extension in your normal Chrome profile. Injects `content-bridge.js` to read and act on pages. |
+| `bin/native-host.js` | Chrome Native Messaging host the extension talks to. |
+| `bin/broker.js` | Local Unix-socket broker. One per user; every agent and the native host meet here. |
+| `bin/mcp-server.js` | The MCP stdio server your agent runs. Starts the broker on demand. |
+
+Because every agent goes through the same broker, Claude and Codex act on the **same** windows and tabs at the same time.
+
+## Quick start
+
+About two minutes. Run everything from the repository root.
+
+**1. Clone**
+
+```bash
+git clone https://github.com/avifenesh/agent-chrome-bridge.git
+cd agent-chrome-bridge
+```
+
+There are no npm dependencies to install.
+
+**2. Register the native messaging host**
 
 ```bash
 npm run install:chrome-host
 ```
 
-2. Open `chrome://extensions`, enable Developer mode, click "Load unpacked", and choose the `extension/` directory inside this repository (for example, the absolute path printed by `npm run install:chrome-host`).
+This writes the host manifest for your platform and a small launcher script that pins your current `node` binary (Chrome starts native hosts with an almost empty `PATH`, so nvm/asdf shims would not be found):
 
-3. Check the extension ID:
+| Platform | Host manifest location |
+|---|---|
+| Linux | `~/.config/google-chrome/NativeMessagingHosts/dev.agent_chrome_bridge.json` |
+| macOS | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/dev.agent_chrome_bridge.json` |
+
+**3. Load the extension**
+
+1. Open `chrome://extensions` and turn on **Developer mode**.
+2. Click **Load unpacked** and pick this repository's `extension/` folder.
+3. Confirm the ID is `pfcpgdlnhaagndelcbdpopojfgalmbkf` (`npm run extension:id` prints the expected value). The ID is fixed by the key in `manifest.json`, so it is the same on every machine.
+
+**4. Register the MCP server with your agents**
 
 ```bash
-npm run extension:id
+npm run install:mcp
 ```
 
-It should be:
+This finds `claude` and/or `codex` on your `PATH` and registers the server with each, using absolute paths:
 
-```text
-pfcpgdlnhaagndelcbdpopojfgalmbkf
+| Client | Registered as | Equivalent manual command |
+|---|---|---|
+| Claude Code | `agent-chrome-bridge` (user scope) | `claude mcp add -s user agent-chrome-bridge -- "$(which node)" "$PWD/bin/mcp-server.js"` |
+| Codex | `agent_chrome_bridge` | `codex mcp add agent_chrome_bridge -- "$(which node)" "$PWD/bin/mcp-server.js"` |
+
+Options: `--claude` or `--codex` to target one client, `--force` to replace an existing entry, `--dry-run` to print the commands without running them. Existing entries are left alone by default, so per-tool approval settings you already configured survive.
+
+<details>
+<summary>Prefer editing config files by hand?</summary>
+
+Claude Code (`~/.claude.json`, or a project `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "agent-chrome-bridge": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/agent-chrome-bridge/bin/mcp-server.js"]
+    }
+  }
+}
 ```
 
-4. Add `bin/mcp-server.js` as an MCP command in Codex and Claude.
+Codex (`~/.codex/config.toml`):
 
-5. Check the live bridge:
+```toml
+[mcp_servers.agent_chrome_bridge]
+command = "/absolute/path/to/node"
+args = ["/absolute/path/to/agent-chrome-bridge/bin/mcp-server.js"]
+```
+
+</details>
+
+**5. Check it**
 
 ```bash
 npm run doctor
 ```
 
-The doctor output includes the broker socket path, action log path, extension connectivity, active tab locks, pending requests, and recent sanitized errors.
+Look for `"extensionConnected": true` and matching versions for every component. Then restart your agent (in Claude Code, `/mcp` reconnects) and ask it to call `chrome_health`.
 
-## Tools
+## Using it
 
-- `chrome_health`
-- `chrome_launch`
-- `chrome_action_log`
-- `chrome_lock_tab`
-- `chrome_unlock_tab`
-- `chrome_locks`
-- `chrome_tabs`
-- `chrome_active_tab`
-- `chrome_select_tab`
-- `chrome_new_tab`
-- `chrome_close_tab`
-- `chrome_reload`
-- `chrome_back`
-- `chrome_forward`
-- `chrome_snapshot`
-- `chrome_find`
-- `chrome_extract_links`
-- `chrome_extract_tables`
-- `chrome_read_article`
-- `chrome_get_network`
-- `chrome_navigate`
-- `chrome_click`
-- `chrome_type`
-- `chrome_scroll`
-- `chrome_wait_for_selector`
-- `chrome_wait_for_text`
-- `chrome_wait_until_idle`
-- `chrome_screenshot`
-- `chrome_cdp_health`
-- `chrome_get_dialog`
-- `chrome_handle_dialog`
-- `chrome_cdp_click`
-- `chrome_cdp_key` (supports `modifiers` bitmask or `modifierKeys: ["ctrl"]` for Ctrl+K, Cmd+K, Shift+Tab, etc.)
-- `chrome_cdp_type`
-- `chrome_get_console`
+### Read, then act by id
 
-`chrome_snapshot` and `chrome_find` return element ids such as `e1` or `f3`, one element per line:
+`chrome_snapshot` and `chrome_find` return one actionable element per line:
 
 ```text
 e4 button "Delete" disabled
@@ -89,52 +132,149 @@ e5 input[email] "Email" name=email value="a@b.co"
 e6 link "Docs" -> /docs offscreen
 ```
 
-Pass an id back to `chrome_click` or `chrome_type` as `elementId`. Snapshot (`e*`) and find (`f*`) ids coexist, and if the page re-rendered the element, the bridge falls back to its recorded selector. Results are compact by default; pass `verbose: true` for the full JSON objects. On a large GitHub page, a compact snapshot is about 16 KB, against 191 KB in the old format.
+Pass an id back to `chrome_click` or `chrome_type` as `elementId`. Snapshot (`e*`) and find (`f*`) ids coexist, and if the page re-rendered the element, the bridge falls back to its recorded selector.
 
-Read tools default to all frames and open shadow roots. Pass `includeFrames: false`, `includeShadow: false`, or a specific `frameId` to narrow the target.
+- `chrome_find` is cheaper than a full snapshot when you know what you are looking for; `maxText: 0` skips page text.
+- Results are compact by default (a large GitHub page is ~16 KB instead of ~191 KB). Pass `verbose: true` for full JSON.
+- Read tools cover all frames and open shadow roots. Narrow with `includeFrames: false`, `includeShadow: false`, or a `frameId`.
+- Navigation tools wait for the page to load; pass `wait: false` to return immediately.
+- Action results carry the new URL and title, any open in-page modal, and notices for dialogs and popups the action caused.
 
-`chrome_health` reports the loaded MCP, broker, native host, extension background, and content-script versions. Pass `tabId` if you want the content-script probe to check a specific tab; otherwise it uses the active injectable tab or the first injectable tab it can find.
+### Sharing the browser between agents
 
-`chrome_launch` starts a Chromium-based browser when the bridge extension is not connected, then polls until it reconnects. It auto-detects `google-chrome`, `google-chrome-stable`, `chromium`, `chromium-browser`, `brave-browser`, and `microsoft-edge` on Linux (and the standard application paths on macOS/Windows). By default it uses your normal user profile so existing logins and the bridge extension are present. If the extension is already connected, it returns `{ status: "already_connected" }` without relaunching unless you pass `force: true`. Example: `chrome_launch({ waitForExtensionMs: 20000 })`.
+Every mutating tool accepts optional guards. If one does not match the target tab, the action is refused:
 
-Mutating tools support optional guards:
+| Guard | Refuses unless |
+|---|---|
+| `expectedHost` | the tab's host matches |
+| `expectedUrlIncludes` | the tab's URL contains the string |
+| `lockId` | the caller holds the tab's lock |
 
-- `expectedHost`
-- `expectedUrlIncludes`
-- `lockId`
+For a longer flow, call `chrome_lock_tab` first and pass the returned `lockId` to each action. Other agents are refused until the lock expires or `chrome_unlock_tab` releases it.
 
-If a guard does not match the target tab, the action is refused. This is useful when multiple agents can control the same browser.
+### Read-only mode
 
-Use `chrome_lock_tab` before a longer edit flow. It returns a `lockId`; pass that `lockId` to mutating tools for that tab. Other agents will be refused until the lock expires or `chrome_unlock_tab` releases it.
+Set `AGENT_CHROME_BRIDGE_READ_ONLY=1` on an MCP server process to expose the read tools and refuse every mutating action — handy for a reviewer agent.
 
-## Dialogs, popups and modals
+## Tools
 
-The bridge sees these without the Chrome debugger:
+**Diagnostics and coordination**
 
-- **JavaScript dialogs.** `extension/page-hook.js` wraps `alert`, `confirm` and `prompt` in every frame. During an agent action, and for 10 s after it, the hook answers without blocking the page. Alerts are accepted. Confirm and prompt are dismissed unless the action passes `onDialog: "accept"` (and `promptText` for a prompt). Each answered dialog shows up under `notices` in the action result, with a hint when the default dismissed it. A dialog the page opens later is native: every tab result reports it as `dialogPending`, and `chrome_tabs` flags `dialogOpen`. Chrome lets CDP answer only dialogs that opened while the debugger was already attached, so the user has to answer these, or the agent reloads the tab. Calling `chrome_handle_dialog` with no dialog open arms the answer for the next dialog in that tab.
-- **Popups.** Tabs or windows a page opens are reported as `notices: [{ kind: "popup", tabId, url }]`. Chrome blocks `window.open` without a user gesture, and a synthetic `element.click()` carries none. Those come back as `popupBlocked`; retry with `chrome_click({ trusted: true })`.
-- **In-page modals.** Snapshots and click/type results report an open `[role=dialog]`, `[aria-modal]` or `<dialog open>` as `modal`, and a snapshot lists the modal's controls first.
+| Tool | What it does |
+|---|---|
+| `chrome_health` | Connectivity, component versions, locks, recent errors. Pass `tabId` to probe a specific tab. |
+| `chrome_launch` | Start Chrome (or Chromium, Brave, Edge) with your normal profile when the extension is not connected, then wait for it. No-op if already connected unless `force: true`. |
+| `chrome_action_log` | Recent sanitized requests and errors. |
+| `chrome_lock_tab` / `chrome_unlock_tab` / `chrome_locks` | Tab locks for multi-agent work. |
+| `chrome_cdp_health` | Whether the CDP tools are available and where the debugger is attached. |
 
-## Chrome's debugging bar
+**Tabs and navigation**
 
-Chrome shows "started debugging this browser" while any extension has a debugger attached. The bridge attaches only for the CDP tools (`chrome_cdp_*`, `chrome_click` with `trusted: true`, `chrome_get_console`). It detaches 15 s after the last CDP call, so the bar goes away. Snapshots, DOM clicks, typing, navigation and dialog handling never attach it. To hide the bar entirely, start Chrome with `--silent-debugger-extension-api`. That flag hides it for every extension, so it is opt-in: `chrome_launch({ args: ["--restore-last-session", "--silent-debugger-extension-api"] })`.
+| Tool | What it does |
+|---|---|
+| `chrome_tabs` / `chrome_active_tab` | List tabs; get the active tab plus unseen dialog/popup notices. |
+| `chrome_select_tab` / `chrome_new_tab` / `chrome_close_tab` | Focus, open, close. |
+| `chrome_navigate` / `chrome_reload` / `chrome_back` / `chrome_forward` | Navigate and wait for load. |
 
-## Notes
+**Reading pages**
 
-Navigation tools (`chrome_navigate`, `chrome_new_tab`, `chrome_reload`, `chrome_back`, `chrome_forward`) wait for the page to load. Pass `wait: false` to return immediately. `chrome_screenshot` returns JPEG scaled to 1280 px wide by default (`format`, `quality`, `maxWidth` override). `cssSize` gives the coordinate space for `chrome_cdp_click`.
+| Tool | What it does |
+|---|---|
+| `chrome_snapshot` | Page text plus actionable elements, one per line. |
+| `chrome_find` | Find elements by selector, text, role, tag, placeholder, name or href. |
+| `chrome_extract_links` / `chrome_extract_tables` / `chrome_read_article` | Links, tables as rows, main article text. |
+| `chrome_get_network` | Resource Timing entries, with frame metadata. |
+| `chrome_screenshot` | JPEG of the visible tab, 1280 px wide by default (`format`, `quality`, `maxWidth`). Reports `cssSize` for `chrome_cdp_click`. |
 
-`chrome_cdp_key` accepts modifier keys via either a numeric `modifiers` bitmask (Alt=1, Ctrl=2, Meta/Cmd=4, Shift=8) or a friendly `modifierKeys` array. For example, to open Slack's quick switcher with Ctrl+K:
+**Acting on pages**
+
+| Tool | What it does |
+|---|---|
+| `chrome_click` | Click by element id, selector or visible text. `trusted: true` uses a real CDP mouse event. |
+| `chrome_type` | Type into inputs, textareas, selects and contenteditables. |
+| `chrome_scroll` | Scroll a tab or frame. |
+| `chrome_wait_for_selector` / `chrome_wait_for_text` / `chrome_wait_until_idle` | Wait for an element, text, or a quiet DOM. |
+| `chrome_get_dialog` / `chrome_handle_dialog` | Inspect or answer a JavaScript dialog. |
+
+**Trusted input and console (CDP)**
+
+| Tool | What it does |
+|---|---|
+| `chrome_cdp_click` | Trusted click at CSS-pixel viewport coordinates. |
+| `chrome_cdp_key` | Trusted key press, with modifiers (see below). |
+| `chrome_cdp_type` | Trusted text insertion into the focused element. |
+| `chrome_get_console` | Console, log and exception events during a wait window. |
+
+`chrome_cdp_key` takes modifiers as a `modifierKeys` array or a numeric `modifiers` bitmask (Alt=1, Ctrl=2, Meta/Cmd=4, Shift=8); both are OR-combined. Ctrl+K to open Slack's quick switcher:
 
 ```json
 { "name": "chrome_cdp_key", "arguments": { "key": "k", "modifierKeys": ["ctrl"] } }
 ```
 
-The same call with the raw bitmask is `{ "key": "k", "modifiers": 2 }`. When both are supplied they are OR-combined.
+## Dialogs, popups and modals
 
-The extension requests Chrome's `debugger` permission for the optional CDP layer and `webNavigation` for popup tracking. After updating from an older version, reload the unpacked extension from `chrome://extensions` and restart the MCP server in your agent client.
+The bridge handles these without the Chrome debugger:
 
-Set `AGENT_CHROME_BRIDGE_READ_ONLY=1` on an MCP server process to expose the same read tools while refusing mutating actions.
+- **JavaScript dialogs.** `extension/page-hook.js` wraps `alert`, `confirm` and `prompt` in every frame. During an agent action, and for 10 s after it, the hook answers without blocking the page: alerts are accepted, confirm and prompt are dismissed unless the action passes `onDialog: "accept"` (plus `promptText` for a prompt). Each answered dialog appears under `notices` in the result. A dialog the page opens later is native: results report it as `dialogPending` and `chrome_tabs` flags `dialogOpen`. Chrome only lets CDP answer dialogs opened while the debugger was attached, so the user answers these or the agent reloads the tab. Calling `chrome_handle_dialog` with no dialog open arms the answer for the next one.
+- **Popups.** Tabs or windows a page opens come back as `notices: [{ kind: "popup", tabId, url }]`. Chrome blocks `window.open` without a user gesture, and a synthetic `element.click()` carries none; those return `popupBlocked`, so retry with `chrome_click({ trusted: true })`.
+- **In-page modals.** An open `[role=dialog]`, `[aria-modal]` or `<dialog open>` is reported as `modal`, and snapshots list its controls first.
 
-`CHROME_BIN=/path/to/chrome-for-testing npm run e2e` runs the bridge end to end against an isolated headless Chrome. Stable Chrome ignores `--load-extension`, so use Chrome for Testing or Chromium. Set `E2E_MEASURE_URL` to print compact vs verbose output sizes for a real page. Scratch files go to `.scratch/e2e` and are removed afterwards.
+### The "started debugging this browser" bar
 
-Action logging is intentionally sanitized: fields such as `text`, `password`, `token`, `secret`, `cookie`, and `authorization` are redacted before they are written to the local JSONL log.
+Chrome shows this bar while any extension has the debugger attached. The bridge attaches only for the CDP tools (`chrome_cdp_*`, `chrome_click` with `trusted: true`, `chrome_get_console`) and detaches 15 s after the last CDP call. Snapshots, DOM clicks, typing, navigation and dialog handling never attach it.
+
+To hide the bar entirely, start Chrome with `--silent-debugger-extension-api`. It hides the bar for every extension, so it is opt-in:
+
+```js
+chrome_launch({ args: ["--restore-last-session", "--silent-debugger-extension-api"] })
+```
+
+## Configuration
+
+All optional.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AGENT_CHROME_BRIDGE_READ_ONLY` | unset | `1` refuses mutating tools on that MCP server. |
+| `AGENT_CHROME_BRIDGE_SOCKET` | see below | Broker socket path. |
+| `AGENT_CHROME_BRIDGE_LOG_DIR` | `~/.local/state/agent-chrome-bridge` | Broker and action logs. |
+| `AGENT_CHROME_BRIDGE_HOST_DIR` | per-platform (above) | Where `install:chrome-host` writes the host manifest, e.g. for Chromium or Brave. |
+
+The broker socket lives in `$XDG_RUNTIME_DIR`, else `/run/user/<uid>` (the usual Linux case), else `~/.local/state/agent-chrome-bridge` (the usual macOS case). Every process resolves the same directory, which matters on macOS where Chrome-launched and terminal-launched processes get different `TMPDIR`s.
+
+The action log is sanitized: fields such as `text`, `password`, `token`, `secret`, `cookie` and `authorization` are redacted before anything is written.
+
+## Troubleshooting
+
+Start with `npm run doctor`; its `nativeMessaging` section shows whether the host manifest exists and points at this checkout.
+
+| Symptom | Fix |
+|---|---|
+| `extensionConnected: false` | Reload the extension in `chrome://extensions`. If it persists, rerun `npm run install:chrome-host` and check that the manifest `path` matches. |
+| Extension ID differs from `pfcpgdlnhaagndelcbdpopojfgalmbkf` | You loaded a different folder; load this repo's `extension/`. |
+| Worked, then broke after switching Node versions | The launcher pins the node binary used at install time. Rerun `npm run install:chrome-host`, and `npm run install:mcp -- --force`. |
+| Agent does not list `chrome_*` tools | Restart the agent after `install:mcp` (in Claude Code, `/mcp`). Check `claude mcp list` / `codex mcp list`. |
+| Versions differ between components in `chrome_health` | Old code still loaded somewhere: reload the extension and restart the agent. |
+| Using Chromium, Brave or Edge | Install the host into that browser's `NativeMessagingHosts` folder with `AGENT_CHROME_BRIDGE_HOST_DIR=... npm run install:chrome-host`. |
+
+## Updating
+
+```bash
+git pull
+npm run install:chrome-host   # refreshes the launcher and manifest
+```
+
+Then reload the extension in `chrome://extensions` and restart your agents. The extension needs Chrome's `debugger` permission (for the optional CDP tools) and `webNavigation` (for popup tracking); Chrome may ask you to approve them after an update.
+
+## Development
+
+```bash
+npm test     # syntax checks plus unit tests, no browser needed
+CHROME_BIN=/path/to/chrome-for-testing npm run e2e
+```
+
+`npm run e2e` runs the bridge end to end against an isolated headless Chrome. Stable Chrome ignores `--load-extension`, so use Chrome for Testing or Chromium. Set `E2E_MEASURE_URL` to print compact vs verbose output sizes for a real page. Scratch files go to `.scratch/e2e` and are removed afterwards.
+
+## License
+
+[MIT](LICENSE)
