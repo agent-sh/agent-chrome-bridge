@@ -78,7 +78,7 @@ function loadWorker({ contentMissing = false } = {}) {
   const chrome = {
     runtime: {
       id: 'test-extension',
-      getManifest: () => ({ manifest_version: 3, name: 'Agent Chrome Bridge', version: '0.8.0' }),
+      getManifest: () => ({ manifest_version: 3, name: 'Agent Chrome Bridge', version: '0.9.0' }),
       connectNative: () => port,
       onInstalled: eventTarget(),
       onStartup: eventTarget(),

@@ -1,0 +1,33 @@
+name: Release
+
+# Push a tag matching package.json, e.g. `git tag v0.9.0 && git push origin v0.9.0`.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Tag matches package.json and extension versions
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          ext=$(node -p "require('./extension/manifest.json').version")
+          test "v$pkg" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != package.json $pkg"; exit 1; }
+          test "$pkg" = "$ext" || { echo "extension/manifest.json $ext != package.json $pkg"; exit 1; }
+      - run: npm test
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: GitHub release
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
