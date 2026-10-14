@@ -1,7 +1,7 @@
 # Agent Chrome Bridge
 
 [![npm](https://img.shields.io/npm/v/@agent-sh/chrome-bridge)](https://www.npmjs.com/package/@agent-sh/chrome-bridge)
-[![CI](https://github.com/avifenesh/agent-chrome-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/avifenesh/agent-chrome-bridge/actions/workflows/ci.yml)
+[![CI](https://github.com/agent-sh/agent-chrome-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/agent-sh/agent-chrome-bridge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Let Claude Code and Codex drive the Chrome you already have open** — your tabs, your logins, your profile — through one shared MCP server.
@@ -277,7 +277,7 @@ Then click reload on the extension in `chrome://extensions` and restart your age
 Work from a checkout; the npm scripts install from the checkout instead of the copied runtime, and Chrome loads `extension/` from the repo:
 
 ```bash
-git clone https://github.com/avifenesh/agent-chrome-bridge.git && cd agent-chrome-bridge
+git clone https://github.com/agent-sh/agent-chrome-bridge.git && cd agent-chrome-bridge
 npm run install:chrome-host   # native host -> this checkout
 npm run install:mcp           # MCP entries -> this checkout (--force to replace)
 npm test                      # syntax checks plus unit tests, no browser needed
