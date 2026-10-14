@@ -15,13 +15,13 @@
     "agent",
     "native-messaging"
   ],
-  "homepage": "https://github.com/avifenesh/agent-chrome-bridge#readme",
+  "homepage": "https://github.com/agent-sh/agent-chrome-bridge#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/avifenesh/agent-chrome-bridge.git"
+    "url": "git+https://github.com/agent-sh/agent-chrome-bridge.git"
   },
   "bugs": {
-    "url": "https://github.com/avifenesh/agent-chrome-bridge/issues"
+    "url": "https://github.com/agent-sh/agent-chrome-bridge/issues"
   },
   "type": "commonjs",
   "bin": {
