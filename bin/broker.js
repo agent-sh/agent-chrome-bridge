@@ -63,23 +63,22 @@ function redactParams(value) {
   if (Array.isArray(value)) return value.map(redactParams);
   if (!value || typeof value !== 'object') return value;
 
-  // Keys come from extension native-messaging JSON and must never reach a
-  // computed property write on a plain object: drop the prototype-pollution
-  // names and copy into a null-prototype object (CodeQL js/remote-property-injection).
-  const redacted = Object.create(null);
+  // Keep untrusted names in a Map, then create data properties without invoking
+  // setters. The serialized log copy still has no prototype.
+  const redacted = new Map();
   for (const [key, child] of Object.entries(value)) {
     if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
     if (/text|password|token|secret|cookie|authorization/i.test(key)) {
       if (typeof child === 'string') {
-        redacted[key] = `[redacted string length=${child.length}]`;
+        redacted.set(key, `[redacted string length=${child.length}]`);
       } else {
-        redacted[key] = '[redacted]';
+        redacted.set(key, '[redacted]');
       }
     } else {
-      redacted[key] = redactParams(child);
+      redacted.set(key, redactParams(child));
     }
   }
-  return redacted;
+  return Object.setPrototypeOf(Object.fromEntries(redacted), null);
 }
 
 function appendAction(entry) {

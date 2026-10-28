@@ -117,6 +117,7 @@ function request(socket, pending, payload) {
     // Built with JSON.parse so "__proto__" is an own data property, exactly
     // like a hostile native-messaging payload.
     const hostile = JSON.parse('{"password":"hunter2","api_token":"abc123","auth":{"cookie":"z"},"__proto__":{"evil":true},"constructor":{"danger":true},"prototype":1,"note":"keep","nested":{"password":"inner","count":2}}');
+    hostile.items = [JSON.parse('{"__proto__":{"evil":true},"constructor":1,"prototype":2,"secret":{"value":"hidden"},"count":3}'), null, 'keep'];
     await request(socket, pending, { type: 'request', id: 'r1', method: 'test.redaction', params: hostile });
     const log = await request(socket, pending, { type: 'request', id: 'r2', method: 'bridge.log', params: { limit: 10 } });
 
@@ -130,6 +131,7 @@ function request(socket, pending, payload) {
     assert.equal(params.nested.password, '[redacted string length=5]');
     assert.equal(params.nested.count, 2);
     assert.equal(params.note, 'keep');
+    assert.deepEqual(params.items, [{ secret: '[redacted]', count: 3 }, null, 'keep']);
 
     assert.equal(Object.prototype.hasOwnProperty.call(params, '__proto__'), false, '__proto__ key must be dropped');
     assert.equal(Object.prototype.hasOwnProperty.call(params, 'constructor'), false, 'constructor key must be dropped');
@@ -141,6 +143,7 @@ function request(socket, pending, payload) {
     const forwarded = extensionSeen.find((message) => message.id === 'r1');
     assert.ok(forwarded, 'request must be forwarded to the extension host');
     assert.equal(forwarded.params.password, 'hunter2', 'forwarding must keep raw params (redaction is log-only)');
+    assert.deepEqual(forwarded.params, hostile, 'forwarding must preserve every raw key and nested value');
 
     socket.destroy();
     extension.destroy();
