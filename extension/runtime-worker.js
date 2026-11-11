@@ -1124,10 +1124,15 @@ function actionResult(tab, base, outcome, params = {}) {
   const navigation = outcome.navigation;
   if (navigation) {
     if (navigation.tab) result.tab = tabBrief(navigation.tab);
-    if (navigation.error) {
+    if (navigation.committed) {
+      result.navigated = true;
+      result.url = navigation.url;
+    } else if (navigation.error) {
       result.navigationError = navigation.error;
     } else {
-      result.navigated = true;
+      // Still loading after the load timeout: the tab shows the old page.
+      result.navigated = false;
+      result.navigationPending = true;
       result.url = navigation.url;
     }
   }
@@ -1142,7 +1147,7 @@ function actionResult(tab, base, outcome, params = {}) {
 // submits the form twice.
 function watchNavigation(tabId, frameId) {
   const frames = new Set([0, Number(frameId || 0)]);
-  const watch = { started: false, url: null, error: null };
+  const watch = { started: false, committed: false, url: null, error: null };
   let finish;
   watch.end = new Promise((resolve) => { finish = resolve; });
   const handlers = {
@@ -1152,6 +1157,7 @@ function watchNavigation(tabId, frameId) {
     },
     onCommitted(details) {
       watch.started = true;
+      watch.committed = true;
       watch.url = details.url;
       finish();
     },
@@ -1177,21 +1183,22 @@ function watchNavigation(tabId, frameId) {
 
 async function runPageAction(tabId, frameId, params, action, graceMs = 0) {
   const watch = watchNavigation(tabId, frameId);
+  let failure = null;
   try {
-    const outcome = await runDialogAwareAction(tabId, () => Promise.race([
-      // Chrome may also fail the call when the navigation removes the frame.
-      Promise.resolve().then(action).catch((error) => {
-        if (!watch.started) throw error;
-      }),
-      watch.end,
-    ]));
+    const acted = Promise.resolve().then(action).catch((error) => { failure = error; });
+    const outcome = await runDialogAwareAction(tabId, () => Promise.race([acted, watch.end]));
+    if (failure && !outcome.dialog) {
+      // Chrome may fail the call when a commit removes the frame, and that
+      // commit reaches the worker at about the same time. Any other error,
+      // even one during an unrelated page load, is the action's own.
+      if (watch.started && !watch.committed) await waitAtMost(watch.end, DIALOG_ACTION_GRACE_MS);
+      if (!watch.committed) throw failure;
+    }
     if (graceMs && !outcome.dialog) await delay(graceMs);
     if (watch.started && !outcome.dialog) {
-      let timer;
-      await Promise.race([watch.end, new Promise((resolve) => { timer = setTimeout(resolve, loadTimeout(params)); })]);
-      clearTimeout(timer);
+      await waitAtMost(watch.end, loadTimeout(params));
       const tab = await chrome.tabs.get(tabId).catch(() => null);
-      outcome.navigation = { url: watch.url, error: watch.error, tab };
+      outcome.navigation = { url: watch.url, committed: watch.committed, error: watch.error, tab };
     }
     return outcome;
   } finally {
@@ -1357,6 +1364,12 @@ async function cdpHandleDialog(params) {
 
 function withTimeout(promise, ms, message) {
   return Promise.race([promise, delay(ms).then(() => { throw new Error(message); })]);
+}
+
+async function waitAtMost(promise, ms) {
+  let timer;
+  await Promise.race([promise, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]);
+  clearTimeout(timer);
 }
 
 // ---- CDP: attached on demand, released after DEBUGGER_IDLE_MS ----
