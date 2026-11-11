@@ -17,7 +17,7 @@ function eventTarget() {
   return {
     addListener: (listener) => listeners.add(listener),
     removeListener: (listener) => listeners.delete(listener),
-    emit: (details) => [...listeners].forEach((listener) => listener(details)),
+    emit: (...args) => [...listeners].forEach((listener) => listener(...args)),
   };
 }
 
@@ -32,6 +32,8 @@ function loadWorker() {
   const reply = () => ({ clicked: true, target: { tag: 'button', text: 'Save' }, page: { url: tab.url, title: tab.title, modal: null } });
   let input = reply;
   const timers = [];
+  const cdp = [];
+  const messages = eventTarget();
   // The tab starts loading /saved and commits it now, after commitMs, or
   // never (Infinity).
   const navigate = (commitMs = 0) => {
@@ -60,7 +62,7 @@ function loadWorker() {
       connectNative: () => ({ onMessage: eventTarget(), onDisconnect: eventTarget(), postMessage() {} }),
       onInstalled: eventTarget(),
       onStartup: eventTarget(),
-      onMessage: eventTarget(),
+      onMessage: messages,
       lastError: null,
     },
     tabs: {
@@ -76,9 +78,10 @@ function loadWorker() {
     debugger: {
       onDetach: eventTarget(),
       onEvent: eventTarget(),
-      attach: async () => {},
+      attach: async () => { cdp.push('attach'); },
       detach: async () => {},
       sendCommand: async (target, method, params) => {
+        cdp.push(method);
         if (params.type === 'mouseReleased') input();
       },
     },
@@ -106,7 +109,12 @@ function loadWorker() {
   vm.createContext(context);
   const worker = fs.readFileSync(path.join(__dirname, '..', 'extension', 'runtime-worker.js'), 'utf8');
   vm.runInContext(`${worker}\nglobalThis.__testDispatch = dispatch;`, context, { filename: 'runtime-worker.js' });
-  return { dispatch: context.__testDispatch, navigate, fireTimer, setInput: (fn) => { input = fn; }, reply };
+  // The page hook reports a native dialog that is now blocking the tab.
+  const openDialog = () => messages.emit(
+    { type: 'agentChromeBridge.dialog', entry: { type: 'confirm', message: 'Leave?', phase: 'opening', at: 1 } },
+    { tab: { id: 7 }, frameId: 0 },
+  );
+  return { dispatch: context.__testDispatch, navigate, fireTimer, openDialog, cdp, setInput: (fn) => { input = fn; }, reply };
 }
 
 // The broker would wait 30 s; anything near that is the old hang.
@@ -191,6 +199,17 @@ const click = (worker) => within2s(worker.dispatch({ method: 'page.click', param
     const result = await within2s(worker.dispatch({ method: 'cdp.click', params: { tabId: 7, x: 10, y: 20 } }));
     assert.equal(result.navigated, true);
     assert.equal(result.url, SAVED);
+  }
+
+  {
+    // With a dialog already open, a CDP click reports it and sends no input.
+    const worker = loadWorker();
+    worker.openDialog();
+    const result = await within2s(worker.dispatch({ method: 'cdp.click', params: { tabId: 7, x: 10, y: 20 } }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(result.dialogPending, true);
+    assert.equal(result.dialog.message, 'Leave?');
+    assert.deepEqual(worker.cdp, []);
   }
 
   process.stdout.write('Click navigation OK\n');

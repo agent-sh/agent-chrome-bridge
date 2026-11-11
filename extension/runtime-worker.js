@@ -1185,8 +1185,12 @@ async function runPageAction(tabId, frameId, params, action, graceMs = 0) {
   const watch = watchNavigation(tabId, frameId);
   let failure = null;
   try {
-    const acted = Promise.resolve().then(action).catch((error) => { failure = error; });
-    const outcome = await runDialogAwareAction(tabId, () => Promise.race([acted, watch.end]));
+    // Start the action inside the callback: with a dialog already open,
+    // runDialogAwareAction returns without calling it.
+    const outcome = await runDialogAwareAction(tabId, () => Promise.race([
+      Promise.resolve().then(action).catch((error) => { failure = error; }),
+      watch.end,
+    ]));
     if (failure && !outcome.dialog) {
       // Chrome may fail the call when a commit removes the frame, and that
       // commit reaches the worker at about the same time. Any other error,
