@@ -944,8 +944,10 @@ async function pageClick(params) {
   assertTabGuard(tab, params);
   const target = await resolveClickTarget(tab.id, params);
   if (params.trusted === true) return trustedClick(tab, target, params);
-  const outcome = await runDialogAwareAction(
+  const outcome = await runPageAction(
     tab.id,
+    target.frameId,
+    params,
     () => executeContent(tab.id, 'clickTarget', [target], target.frameId, controlFor(tab.id, params)),
   );
   return actionResult(tab, { clicked: true }, outcome, params);
@@ -956,8 +958,10 @@ async function pageType(params) {
   const tab = await resolveTab(params);
   assertTabGuard(tab, params);
   const target = await resolveTypeTarget(tab.id, params);
-  const outcome = await runDialogAwareAction(
+  const outcome = await runPageAction(
     tab.id,
+    target.frameId,
+    params,
     () => executeContent(tab.id, 'typeIntoTarget', [
       target,
       params.text,
@@ -1117,8 +1121,82 @@ function actionResult(tab, base, outcome, params = {}) {
   }
   if (value.target) result.target = params.verbose === true ? value.target : elementBrief(value.target, tab.url);
   if (value.submitted) result.submitted = true;
+  const navigation = outcome.navigation;
+  if (navigation) {
+    if (navigation.tab) result.tab = tabBrief(navigation.tab);
+    if (navigation.error) {
+      result.navigationError = navigation.error;
+    } else {
+      result.navigated = true;
+      result.url = navigation.url;
+    }
+  }
   if (outcome.actionPending) result.completed = false;
   return withNotices(tab.id, result);
+}
+
+// A click or submit that loads a new document unloads the content script
+// before it replies, and Chrome then never settles executeScript. Watch the
+// main frame and the acting frame, end the action when that navigation
+// commits or fails, and report it: a timeout here invites a retry that
+// submits the form twice.
+function watchNavigation(tabId, frameId) {
+  const frames = new Set([0, Number(frameId || 0)]);
+  const watch = { started: false, url: null, error: null };
+  let finish;
+  watch.end = new Promise((resolve) => { finish = resolve; });
+  const handlers = {
+    onBeforeNavigate(details) {
+      watch.started = true;
+      watch.url = details.url;
+    },
+    onCommitted(details) {
+      watch.started = true;
+      watch.url = details.url;
+      finish();
+    },
+    // A download or a 204 reply ends the navigation and keeps the page.
+    onErrorOccurred(details) {
+      if (!watch.started) return;
+      watch.error = details.error;
+      finish();
+    },
+  };
+  const listeners = Object.entries(handlers).map(([name, handle]) => {
+    const listener = (details) => {
+      if (details.tabId === tabId && frames.has(details.frameId)) handle(details);
+    };
+    chrome.webNavigation?.[name]?.addListener(listener);
+    return [name, listener];
+  });
+  watch.stop = () => {
+    for (const [name, listener] of listeners) chrome.webNavigation?.[name]?.removeListener(listener);
+  };
+  return watch;
+}
+
+async function runPageAction(tabId, frameId, params, action, graceMs = 0) {
+  const watch = watchNavigation(tabId, frameId);
+  try {
+    const outcome = await runDialogAwareAction(tabId, () => Promise.race([
+      // Chrome may also fail the call when the navigation removes the frame.
+      Promise.resolve().then(action).catch((error) => {
+        if (!watch.started) throw error;
+      }),
+      watch.end,
+    ]));
+    if (graceMs && !outcome.dialog) await delay(graceMs);
+    if (watch.started && !outcome.dialog) {
+      let timer;
+      await Promise.race([watch.end, new Promise((resolve) => { timer = setTimeout(resolve, loadTimeout(params)); })]);
+      clearTimeout(timer);
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      outcome.navigation = { url: watch.url, error: watch.error, tab };
+    }
+    return outcome;
+  } finally {
+    watch.stop();
+  }
 }
 
 // Race the action against a native dialog opening. Inside the agent window
@@ -1385,8 +1463,7 @@ async function cdpAction(params, base, run) {
   const tab = await resolveTab(params);
   assertTabGuard(tab, params);
   await armTab(tab.id, controlFor(tab.id, params));
-  const outcome = await runDialogAwareAction(tab.id, () => withDebugger(tab.id, run));
-  if (!outcome.dialog) await delay(DIALOG_ACTION_GRACE_MS);
+  const outcome = await runPageAction(tab.id, 0, params, () => withDebugger(tab.id, run), DIALOG_ACTION_GRACE_MS);
   const fresh = await chrome.tabs.get(tab.id).catch(() => tab);
   return actionResult(fresh, base, outcome, params);
 }

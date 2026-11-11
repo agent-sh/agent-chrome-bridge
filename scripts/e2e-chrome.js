@@ -47,15 +47,19 @@ const PAGE = `<!doctype html><title>Fixture</title>
 <button id="soon" onclick="setTimeout(()=>{out.textContent=String(confirm('Soon?'))}, 3000)">Soon confirm</button>
 <button id="late" onclick="setTimeout(()=>{out.textContent=String(confirm('Late?'))}, 11000)">Late confirm</button>
 <a href="/page2">Next page</a>
+<form method="post" action="/saved"><button id="save">Save</button></form>
 <input id="q" name="q" placeholder="Search">
 <div id="out">-</div>
 <div id="m" role="dialog" aria-label="Settings" hidden style="position:fixed;inset:20%;background:#eee;z-index:9">
   <p>Modal body</p><button onclick="m.hidden=true">Close modal</button>
 </div>`;
 
+let posts = 0;
 const server = http.createServer((req, res) => {
   res.setHeader('content-type', 'text/html');
+  if (req.method === 'POST') posts += 1;
   if (req.url === '/page2') res.end('<!doctype html><title>Page two</title><p>second page</p>');
+  else if (req.url === '/saved') res.end('<!doctype html><title>Saved</title><p>saved</p>');
   else res.end(PAGE);
 });
 
@@ -172,6 +176,16 @@ async function main() {
   assert.equal(nav.tab.title, 'Page two');
   const back = await call('tabs.back', { tabId });
   assert.equal(back.tab.title, 'Fixture');
+
+  // A click that submits a form unloads the page before it can reply.
+  const saved = await call('page.click', { tabId, selector: '#save' }, 10000);
+  assert.equal(saved.navigated, true, `form submit: ${JSON.stringify(saved)}`);
+  assert.equal(saved.url, `${base}/saved`);
+  assert.equal(posts, 1);
+  await call('page.navigate', { tabId, url: `${base}/` });
+  const linked = await call('page.click', { tabId, selector: 'a[href="/page2"]', trusted: true }, 10000);
+  assert.equal(linked.navigated, true, `trusted link click: ${JSON.stringify(linked)}`);
+  assert.equal(linked.url, `${base}/page2`);
 
   await call('tabs.select', { tabId });
   const shot = await call('page.screenshot', { tabId }).catch((error) => ({ error: error.message }));

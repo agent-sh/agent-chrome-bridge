@@ -196,7 +196,7 @@ Set `AGENT_CHROME_BRIDGE_READ_ONLY=1` on an MCP server process to expose the rea
 
 | Tool | What it does |
 |---|---|
-| `chrome_click` | Click by element id, selector or visible text. `trusted: true` uses a real CDP mouse event. |
+| `chrome_click` | Click by element id, selector or visible text. `trusted: true` uses a real CDP mouse event. A click that loads a new page returns `navigated: true` and the new `url`. |
 | `chrome_type` | Type into inputs, textareas, selects and contenteditables. |
 | `chrome_scroll` | Scroll a tab or frame. |
 | `chrome_wait_for_selector` / `chrome_wait_for_text` / `chrome_wait_until_idle` | Wait for an element, text, or a quiet DOM. |
