@@ -190,7 +190,7 @@ Set `AGENT_CHROME_BRIDGE_READ_ONLY=1` on an MCP server process to expose the rea
 | `chrome_find` | Find elements by selector, text, role, tag, placeholder, name or href. |
 | `chrome_extract_links` / `chrome_extract_tables` / `chrome_read_article` | Links, tables as rows, main article text. |
 | `chrome_get_network` | Resource Timing entries, with frame metadata. |
-| `chrome_screenshot` | JPEG of a tab's viewport, 1280 px wide by default (`format`, `quality`, `maxWidth`). A background tab is captured through CDP and stays in the background. Reports `cssSize` for `chrome_cdp_click`. |
+| `chrome_screenshot` | JPEG of a tab's viewport, 1280 px wide by default (`format`, `quality`, `maxWidth`). A background tab or a minimized window is captured through CDP and stays where it is. Reports `cssSize` for `chrome_cdp_click`. |
 
 **Acting on pages**
 

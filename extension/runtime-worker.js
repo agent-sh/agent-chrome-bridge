@@ -1030,9 +1030,10 @@ async function pageScreenshot(params) {
   const quality = clampedNumberParam(params, 'quality', 70, 10, 100);
   const maxWidth = clampedNumberParam(params, 'maxWidth', 1280, 200, 4000);
   const options = format === 'png' ? { format } : { format, quality };
-  let dataUrl = tab.active
-    ? await chrome.tabs.captureVisibleTab(tab.windowId, options)
-    : await captureBackgroundTab(tab.id, options);
+  if (tab.discarded) {
+    throw new Error(`Tab ${tab.id} is discarded and has no page to capture; chrome_reload loads it again without bringing it to the front.`);
+  }
+  let dataUrl = await captureOnScreenTab(tab, options) || await captureBackgroundTab(tab.id, options);
   let size = null;
   try {
     const scaled = await downscaleDataUrl(dataUrl, format, quality, maxWidth);
@@ -1047,9 +1048,24 @@ async function pageScreenshot(params) {
   return withNotices(tab.id, { tab: tabBrief(tab), mimeType, size, cssSize, dataUrl });
 }
 
-// captureVisibleTab sees only the tab on screen. For a background tab,
-// Page.captureScreenshot makes Chrome paint the page for the capture while it
-// stays hidden, so the window's active tab does not change.
+// captureVisibleTab captures whatever the window shows, so trust it only for
+// the active tab of a window that is not minimized, and only if the tab is
+// still active after the capture. Otherwise return null and use CDP.
+async function captureOnScreenTab(tab, options) {
+  if (!tab.active) return null;
+  try {
+    const window = await chrome.windows.get(tab.windowId);
+    if (window.state === 'minimized') return null;
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, options);
+    return (await chrome.tabs.get(tab.id)).active ? dataUrl : null;
+  } catch {
+    return null;
+  }
+}
+
+// For a background tab, Page.captureScreenshot makes Chrome paint the page
+// for the capture while it stays hidden, so the window's active tab does not
+// change.
 async function captureBackgroundTab(tabId, options) {
   try {
     const { data } = await withDebugger(tabId, (target) => withTimeout(
