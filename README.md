@@ -190,7 +190,7 @@ Set `AGENT_CHROME_BRIDGE_READ_ONLY=1` on an MCP server process to expose the rea
 | `chrome_find` | Find elements by selector, text, role, tag, placeholder, name or href. |
 | `chrome_extract_links` / `chrome_extract_tables` / `chrome_read_article` | Links, tables as rows, main article text. |
 | `chrome_get_network` | Resource Timing entries, with frame metadata. |
-| `chrome_screenshot` | JPEG of the visible tab, 1280 px wide by default (`format`, `quality`, `maxWidth`). Reports `cssSize` for `chrome_cdp_click`. |
+| `chrome_screenshot` | JPEG of a tab's viewport, 1280 px wide by default (`format`, `quality`, `maxWidth`). A background tab is captured through CDP and stays in the background. Reports `cssSize` for `chrome_cdp_click`. |
 
 **Acting on pages**
 
@@ -227,7 +227,7 @@ The bridge handles these without the Chrome debugger:
 
 ### The "started debugging this browser" bar
 
-Chrome shows this bar while any extension has the debugger attached. The bridge attaches only for the CDP tools (`chrome_cdp_*`, `chrome_click` with `trusted: true`, `chrome_get_console`) and detaches 15 s after the last CDP call. Snapshots, DOM clicks, typing, navigation and dialog handling never attach it.
+Chrome shows this bar while any extension has the debugger attached. The bridge attaches only for the CDP tools (`chrome_cdp_*`, `chrome_click` with `trusted: true`, `chrome_get_console`, `chrome_screenshot` of a background tab) and detaches 15 s after the last CDP call. Snapshots, DOM clicks, typing, navigation and dialog handling never attach it.
 
 To hide the bar entirely, start Chrome with `--silent-debugger-extension-api`. It hides the bar for every extension, so it is opt-in:
 

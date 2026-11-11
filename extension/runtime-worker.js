@@ -14,6 +14,8 @@ const AGENT_WINDOW_MS = 10000;
 // The debugger is attached only for CDP tools and released after this much
 // idle time, so Chrome's "started debugging this browser" bar goes away.
 const DEBUGGER_IDLE_MS = 15000;
+// CDP can stall on a hidden tab; fail well before the broker times out.
+const CDP_SCREENSHOT_TIMEOUT_MS = 10000;
 const MAX_NOTICES = 20;
 let port = null;
 let reconnectTimer = null;
@@ -1027,10 +1029,10 @@ async function pageScreenshot(params) {
   const format = params.format === 'png' ? 'png' : 'jpeg';
   const quality = clampedNumberParam(params, 'quality', 70, 10, 100);
   const maxWidth = clampedNumberParam(params, 'maxWidth', 1280, 200, 4000);
-  if (!tab.active) {
-    throw new Error(`Tab ${tab.id} is not the visible tab in its window; call chrome_select_tab first.`);
-  }
-  let dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, format === 'png' ? { format } : { format, quality });
+  const options = format === 'png' ? { format } : { format, quality };
+  let dataUrl = tab.active
+    ? await chrome.tabs.captureVisibleTab(tab.windowId, options)
+    : await captureBackgroundTab(tab.id, options);
   let size = null;
   try {
     const scaled = await downscaleDataUrl(dataUrl, format, quality, maxWidth);
@@ -1043,6 +1045,22 @@ async function pageScreenshot(params) {
   // cssSize is the coordinate space for chrome_cdp_click.
   const cssSize = tab.width && tab.height ? { width: tab.width, height: tab.height } : undefined;
   return withNotices(tab.id, { tab: tabBrief(tab), mimeType, size, cssSize, dataUrl });
+}
+
+// captureVisibleTab sees only the tab on screen. For a background tab,
+// Page.captureScreenshot makes Chrome paint the page for the capture while it
+// stays hidden, so the window's active tab does not change.
+async function captureBackgroundTab(tabId, options) {
+  try {
+    const { data } = await withDebugger(tabId, (target) => withTimeout(
+      cdpSend(target, 'Page.captureScreenshot', options),
+      CDP_SCREENSHOT_TIMEOUT_MS,
+      'Page.captureScreenshot timed out',
+    ));
+    return `data:image/${options.format};base64,${data}`;
+  } catch (error) {
+    throw new Error(`Could not capture background tab ${tabId}: ${error.message || error}. chrome_snapshot reads it without a screenshot.`);
+  }
 }
 
 // Device-pixel screenshots are often 2x the CSS viewport. Scale them down so
