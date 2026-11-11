@@ -222,7 +222,17 @@ async function tabCreate(params) {
   return { tab: tabBrief(load.tab || created), loaded: load.loaded, waitedMs: load.waitedMs };
 }
 
-async function tabClose(params) {
+// Closes run one at a time, so two agents closing the last two tabs of a
+// window cannot both see "another tab is left" and quit Chrome together.
+let closeQueue = Promise.resolve();
+
+function tabClose(params) {
+  const run = closeQueue.then(() => closeOneTab(params));
+  closeQueue = run.catch(() => {});
+  return run;
+}
+
+async function closeOneTab(params) {
   if (params.tabId === undefined || params.tabId === null) throw new Error('tabId is required');
   const tab = await chrome.tabs.get(Number(params.tabId)).catch(() => null);
   // A tab that closed itself (an auth popup) or that the user closed is already where the caller wants it.
@@ -230,9 +240,19 @@ async function tabClose(params) {
     forgetTab(Number(params.tabId));
     return { closed: true, alreadyClosed: true, tabId: Number(params.tabId) };
   }
+  // Chrome quits when its last window closes. Keep the last normal window
+  // open with a background new tab, so focus does not move.
+  const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
+  const last = windows.length === 1 && windows[0].id === tab.windowId && windows[0].tabs.length === 1;
+  const blank = last ? await chrome.tabs.create({ windowId: tab.windowId, active: false }) : null;
   await chrome.tabs.remove(tab.id);
   forgetTab(tab.id);
-  return { closed: true, tab: tabBrief(tab) };
+  const result = { closed: true, tab: tabBrief(tab) };
+  if (blank) {
+    result.blankTabId = blank.id;
+    result.notice = 'This was the last tab of the last Chrome window, so a blank new tab was left to keep Chrome open.';
+  }
+  return result;
 }
 
 async function tabReload(params) {

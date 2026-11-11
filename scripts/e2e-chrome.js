@@ -213,6 +213,12 @@ async function main() {
     }
   }
 
+  // Closing every tab leaves one blank tab, so Chrome does not quit.
+  const closes = [];
+  for (const tab of await call('tabs.list')) closes.push(await call('tabs.close', { tabId: tab.id }));
+  assert(closes.at(-1).blankTabId, `last close left no tab: ${JSON.stringify(closes)}`);
+  assert.deepEqual((await call('tabs.list')).map((tab) => tab.id), [closes.at(-1).blankTabId]);
+
   process.stdout.write('E2E OK\n');
 }
 

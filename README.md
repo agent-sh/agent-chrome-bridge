@@ -169,7 +169,7 @@ Set `AGENT_CHROME_BRIDGE_READ_ONLY=1` on an MCP server process to expose the rea
 | Tool | What it does |
 |---|---|
 | `chrome_health` | Connectivity, component versions, locks, recent errors. Pass `tabId` to probe a specific tab. |
-| `chrome_launch` | Start Chrome (or Chromium, Brave, Edge) with your normal profile when the extension is not connected, then wait for it. No-op if already connected unless `force: true`. |
+| `chrome_launch` | Start Chrome (or Chromium, Brave, Edge) with your normal profile, then wait for the extension. Agents are told to use it only when you ask. No-op if already connected unless `force: true`. |
 | `chrome_action_log` | Recent sanitized requests and errors. |
 | `chrome_lock_tab` / `chrome_unlock_tab` / `chrome_locks` | Tab locks for multi-agent work. |
 | `chrome_cdp_health` | Whether the CDP tools are available and where the debugger is attached. |
@@ -179,7 +179,7 @@ Set `AGENT_CHROME_BRIDGE_READ_ONLY=1` on an MCP server process to expose the rea
 | Tool | What it does |
 |---|---|
 | `chrome_tabs` / `chrome_active_tab` | List tabs; get the active tab plus unseen dialog/popup notices. |
-| `chrome_select_tab` / `chrome_new_tab` / `chrome_close_tab` | Focus, open, close. |
+| `chrome_select_tab` / `chrome_new_tab` / `chrome_close_tab` | Focus, open, close. Closing the last tab of the last window leaves a blank tab, so Chrome does not quit. |
 | `chrome_navigate` / `chrome_reload` / `chrome_back` / `chrome_forward` | Navigate and wait for load. |
 
 **Reading pages**

@@ -70,7 +70,8 @@ function connectBroker(attempt = 0) {
     connected = true;
     brokerConnecting = false;
     broker = socket;
-    writeBroker({ type: 'hello', role: 'extension-host', pid: process.pid, version: PACKAGE_VERSION });
+    // Chrome starts the host (the launcher execs node), so ppid is the browser.
+    writeBroker({ type: 'hello', role: 'extension-host', pid: process.pid, browserPid: process.ppid, version: PACKAGE_VERSION });
   });
 
   socket.on('data', makeLineReader((message) => {

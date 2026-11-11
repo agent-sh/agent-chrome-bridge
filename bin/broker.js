@@ -16,6 +16,8 @@ const ACTION_LOG = path.join(LOG_DIR, 'actions.jsonl');
 
 let extensionSocket = null;
 let extensionHostInfo = null;
+// The last extension host seen in this broker's life, kept after it leaves.
+let lastExtensionHost = null;
 const pending = new Map();
 const connections = new Set();
 const recentRequests = [];
@@ -115,15 +117,42 @@ function recordError(id, method, error) {
   appendAction({ ...entry, type: 'error' });
 }
 
+// Signal 0 only checks that the pid exists; the browser sees nothing.
+function browserGone(pid) {
+  if (!Number.isInteger(pid) || pid <= 1) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error.code === 'ESRCH';
+  }
+}
+
+const RELAUNCH_NOTE = 'Report this to the user; do not relaunch their browser.';
+
+function notConnectedError() {
+  if (!lastExtensionHost) {
+    return 'Chrome bridge extension is not connected. Load the extension in Chrome and make sure the native host is installed.';
+  }
+  const since = lastExtensionHost.disconnectedAt;
+  if (browserGone(lastExtensionHost.browserPid)) {
+    return `Chrome is not running; the extension was last connected at ${since}. ${RELAUNCH_NOTE}`;
+  }
+  return `Chrome bridge extension has not connected since ${since}; Chrome may be closed. ${RELAUNCH_NOTE}`;
+}
+
 function health() {
   cleanupLocks();
+  const extensionConnected = Boolean(extensionSocket && !extensionSocket.destroyed);
   return {
     ok: true,
     pid: process.pid,
     socketPath: SOCKET_PATH,
     logPath: ACTION_LOG,
     uptimeSeconds: Math.round((Date.now() - STARTED_AT) / 1000),
-    extensionConnected: Boolean(extensionSocket && !extensionSocket.destroyed),
+    extensionConnected,
+    extensionError: extensionConnected ? undefined : notConnectedError(),
+    lastExtensionHost: extensionConnected ? undefined : lastExtensionHost,
     broker: {
       version: PACKAGE_VERSION,
       startedAt: new Date(STARTED_AT).toISOString(),
@@ -232,6 +261,7 @@ function handleExtensionMessage(socket, message) {
     extensionSocket = socket;
     extensionHostInfo = {
       pid: message.pid || null,
+      browserPid: message.browserPid || null,
       version: message.version || null,
       connectedAt: new Date().toISOString(),
     };
@@ -307,12 +337,9 @@ function handleClientMessage(socket, message) {
   }
 
   if (!extensionSocket || extensionSocket.destroyed) {
-    recordError(message.id, message.method, 'Chrome bridge extension is not connected.');
-    sendLine(socket, {
-      type: 'response',
-      id: message.id,
-      error: 'Chrome bridge extension is not connected. Load the extension in Chrome and make sure the native host is installed.',
-    });
+    const error = notConnectedError();
+    recordError(message.id, message.method, error);
+    sendLine(socket, { type: 'response', id: message.id, error });
     return;
   }
 
@@ -354,6 +381,7 @@ function onConnection(socket) {
     connections.delete(socket);
     if (socket === extensionSocket) {
       extensionSocket = null;
+      lastExtensionHost = { ...extensionHostInfo, disconnectedAt: new Date().toISOString() };
       extensionHostInfo = null;
       rejectAllForExtension('Chrome bridge extension disconnected.');
       log('extension host disconnected');
